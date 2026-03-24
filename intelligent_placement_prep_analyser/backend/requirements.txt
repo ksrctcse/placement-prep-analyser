@@ -1,0 +1,17 @@
+
+fastapi
+uvicorn
+python-jose
+passlib
+sqlalchemy
+psycopg2-binary
+langchain
+langchain-google-genai
+google-generativeai
+chromadb
+faiss-cpu
+python-multipart
+speechrecognition
+pydub
+python-dotenv
+pdfplumber
