@@ -314,10 +314,28 @@ async def forgot_password(email: str):
 @router.get("/verify-token")
 async def verify_token(token: str):
     """Verify if a token is valid"""
-    payload = decode_token(token)
-    if not payload:
+    try:
+        if token.startswith("Bearer "):
+            token = token[7:]
+        
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        return {
+            "valid": True,
+            "email": payload.get("sub"),
+            "user_id": payload.get("user_id"),
+            "role": payload.get("role")
+        }
+    except JWTError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired token"
         )
-    return {"valid": True, "email": payload.get("sub")}
+
+
+@router.post("/logout")
+async def logout():
+    """Logout endpoint - JWT is stateless, so just return success"""
+    return {
+        "message": "Logged out successfully",
+        "status": "success"
+    }

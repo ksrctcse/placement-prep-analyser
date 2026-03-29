@@ -2,6 +2,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.routes import student_routes, staff_routes, resume_routes, interview_routes, auth_routes
+from app.routes import student_dashboard, staff_dashboard
 
 app = FastAPI(
     title="Placement AI Agent",
@@ -29,6 +30,8 @@ app.add_middleware(
 app.include_router(auth_routes.router)
 app.include_router(student_routes.router)
 app.include_router(staff_routes.router)
+app.include_router(student_dashboard.router)
+app.include_router(staff_dashboard.router)
 app.include_router(resume_routes.router)
 app.include_router(interview_routes.router)
 
