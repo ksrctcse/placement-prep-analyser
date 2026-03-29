@@ -18,6 +18,12 @@ const StudentDashboard = () => {
   const [resumeFile, setResumeFile] = useState(null);
   const [message, setMessage] = useState({ type: '', text: '' });
   const [dragActive, setDragActive] = useState(false);
+  const [selectedTopicIds, setSelectedTopicIds] = useState([]);
+  const [generatedMCQs, setGeneratedMCQs] = useState([]);
+  const [showTestBuilder, setShowTestBuilder] = useState(false);
+  const [isGeneratingMCQs, setIsGeneratingMCQs] = useState(false);
+  const [isCreatingTest, setIsCreatingTest] = useState(false);
+  const [testName, setTestName] = useState('');
   const fileInputRef = React.useRef(null);
   const navigate = useNavigate();
 
@@ -221,6 +227,101 @@ const StudentDashboard = () => {
     navigate('/auth');
   };
 
+  const addTopicToTest = async (topicId) => {
+    try {
+      await axios.post(
+        `${API_BASE}/student/test-builder/add-topic/${topicId}`,
+        {},
+        { headers: { 'Authorization': authHeader } }
+      );
+      
+      if (!selectedTopicIds.includes(topicId)) {
+        setSelectedTopicIds([...selectedTopicIds, topicId]);
+      }
+      
+      setMessage({ type: 'success', text: 'Topic added to test!' });
+    } catch (error) {
+      setMessage({ type: 'error', text: 'Failed to add topic' });
+    }
+  };
+
+  const removeTopicFromTest = async (topicId) => {
+    try {
+      await axios.post(
+        `${API_BASE}/student/test-builder/remove-topic/${topicId}`,
+        {},
+        { headers: { 'Authorization': authHeader } }
+      );
+      
+      setSelectedTopicIds(selectedTopicIds.filter(id => id !== topicId));
+      setMessage({ type: 'success', text: 'Topic removed' });
+    } catch (error) {
+      setMessage({ type: 'error', text: 'Failed to remove topic' });
+    }
+  };
+
+  const generateMCQs = async () => {
+    if (selectedTopicIds.length === 0) {
+      setMessage({ type: 'error', text: 'Please select at least one topic' });
+      return;
+    }
+
+    setIsGeneratingMCQs(true);
+    try {
+      const response = await axios.post(
+        `${API_BASE}/student/test-builder/generate-mcqs`,
+        {
+          topic_ids: selectedTopicIds,
+          num_questions: 5
+        },
+        { headers: { 'Authorization': authHeader } }
+      );
+
+      setGeneratedMCQs(response.data.mcqs || []);
+      setMessage({ type: 'success', text: `Generated ${response.data.total_questions} MCQ questions!` });
+    } catch (error) {
+      const errorMsg = error.response?.data?.detail || 'Failed to generate MCQs';
+      setMessage({ type: 'error', text: errorMsg });
+    } finally {
+      setIsGeneratingMCQs(false);
+    }
+  };
+
+  const createTest = async () => {
+    if (generatedMCQs.length === 0) {
+      setMessage({ type: 'error', text: 'Please generate MCQs first' });
+      return;
+    }
+
+    setIsCreatingTest(true);
+    try {
+      const response = await axios.post(
+        `${API_BASE}/student/test-builder/create-test`,
+        { title: testName || undefined },
+        { headers: { 'Authorization': authHeader } }
+      );
+
+      setMessage({ type: 'success', text: 'Test created successfully! Check the Take Tests section.' });
+      
+      // Reset builder
+      setSelectedTopicIds([]);
+      setGeneratedMCQs([]);
+      setTestName('');
+      setShowTestBuilder(false);
+      
+      // Refresh tests list
+      setTimeout(() => {
+        setActiveMenu('tests');
+        fetchTests();
+      }, 1500);
+    } catch (error) {
+      const errorMsg = error.response?.data?.detail || 'Failed to create test';
+      setMessage({ type: 'error', text: errorMsg });
+    } finally {
+      setIsCreatingTest(false);
+    }
+  };
+
   return (
     <div className="student-dashboard">
       {/* Sidebar */}
@@ -360,23 +461,135 @@ const StudentDashboard = () => {
         {activeMenu === 'topics' && (
           <div className="topics-view">
             <h1>Available Topics</h1>
+            
             {topics.length > 0 ? (
               <div className="topics-grid">
                 {topics.map((topic) => (
                   <div key={topic.id} className="topic-card">
                     <div className="topic-header">
                       <h3>{topic.title}</h3>
+                      <span className="topic-badge">
+                        {topic.department_name} - Section {topic.section}
+                      </span>
                     </div>
                     <p className="topic-description">{topic.description || 'No description provided'}</p>
                     <div className="topic-meta">
                       <span className="staff-name">👨‍🏫 {topic.staff_name}</span>
                       <span className="topic-date">{new Date(topic.created_at).toLocaleDateString()}</span>
                     </div>
+                    <div className="topic-info">
+                      {topic.file_size && (
+                        <span className="file-size">📄 {(topic.file_size / 1024).toFixed(2)} KB</span>
+                      )}
+                      {topic.is_indexed && (
+                        <span className="status-badge indexed">✓ Indexed ({topic.embedding_chunks} chunks)</span>
+                      )}
+                    </div>
+                    <div className="topic-actions">
+                      {topic.download_url && (
+                        <a 
+                          href={`${API_BASE}${topic.download_url}`}
+                          className="download-link"
+                          download
+                          title="Download PDF"
+                        >
+                          📥 PDF
+                        </a>
+                      )}
+                      <button
+                        className={`add-to-test-btn ${selectedTopicIds.includes(topic.id) ? 'added' : ''}`}
+                        onClick={() => selectedTopicIds.includes(topic.id) ? removeTopicFromTest(topic.id) : addTopicToTest(topic.id)}
+                        title={selectedTopicIds.includes(topic.id) ? 'Remove from test' : 'Add to test'}
+                      >
+                        {selectedTopicIds.includes(topic.id) ? '✓ Added' : '+ Add to Test'}
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
             ) : (
               <p className="no-data">No topics available yet</p>
+            )}
+            
+            {/* Test Builder Section */}
+            {selectedTopicIds.length > 0 && (
+              <div className="test-builder-panel">
+                <div className="selected-topics-header">
+                  <h3>📝 Topics Selected for Test ({selectedTopicIds.length})</h3>
+                  <button 
+                    className="toggle-builder-btn"
+                    onClick={() => setShowTestBuilder(!showTestBuilder)}
+                  >
+                    {showTestBuilder ? 'Hide' : 'Show'} Test Builder
+                  </button>
+                </div>
+
+                {showTestBuilder && (
+                  <div className="test-builder-content">
+                    <div className="selected-topics-list">
+                      {topics.filter(t => selectedTopicIds.includes(t.id)).map(topic => (
+                        <div key={topic.id} className="selected-topic-item">
+                          <span>{topic.title}</span>
+                          <button 
+                            className="remove-topic-btn"
+                            onClick={() => removeTopicFromTest(topic.id)}
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+
+                    {generatedMCQs.length === 0 ? (
+                      <button 
+                        className="generate-btn"
+                        onClick={generateMCQs}
+                        disabled={isGeneratingMCQs || selectedTopicIds.length === 0}
+                      >
+                        {isGeneratingMCQs ? '⏳ Generating MCQs...' : '✨ Generate MCQs'}
+                      </button>
+                    ) : (
+                      <div className="mcq-section">
+                        <h4>Generated Questions ({generatedMCQs.length})</h4>
+                        <div className="mcq-preview">
+                          {generatedMCQs.slice(0, 3).map((mcq, idx) => (
+                            <div key={idx} className="mcq-item">
+                              <p className="question"><strong>Q{idx + 1}:</strong> {mcq.question}</p>
+                              <ul className="options">
+                                <li>A) {mcq.option_a}</li>
+                                <li>B) {mcq.option_b}</li>
+                                <li>C) {mcq.option_c}</li>
+                                <li>D) {mcq.option_d}</li>
+                              </ul>
+                            </div>
+                          ))}
+                          {generatedMCQs.length > 3 && (
+                            <p className="more-questions">+{generatedMCQs.length - 3} more questions</p>
+                          )}
+                        </div>
+
+                        <div className="test-name-input">
+                          <label>Test Name (optional)</label>
+                          <input
+                            type="text"
+                            placeholder="Enter test name (or auto-generated from topics)"
+                            value={testName}
+                            onChange={(e) => setTestName(e.target.value)}
+                          />
+                        </div>
+
+                        <button 
+                          className="create-test-btn"
+                          onClick={createTest}
+                          disabled={isCreatingTest || generatedMCQs.length === 0}
+                        >
+                          {isCreatingTest ? '⏳ Creating Test...' : '🎯 Create Test'}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
             )}
           </div>
         )}

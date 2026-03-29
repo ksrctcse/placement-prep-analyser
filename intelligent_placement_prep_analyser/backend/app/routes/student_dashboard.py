@@ -5,11 +5,17 @@ from fastapi import APIRouter, HTTPException, status, UploadFile, File, Header
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from app.database.db import SessionLocal
-from app.database.models import StudentProfile, TestAttempt, InterviewAttempt, User, Resume, Topic, Test, Interview
+from app.database.models import StudentProfile, TestAttempt, InterviewAttempt, User, Resume, Topic, Test, Interview, TestQuestion, test_topics_association
 from app.services.vector_service import search_topic
-from typing import Optional
+from typing import Optional, List
 from jose import JWTError, jwt
 import os
+from datetime import datetime
+
+router = APIRouter(prefix="/student", tags=["student"])
+
+# Temporary storage for selected topics for test building (user_id -> list of topic_ids)
+test_builder_sessions = {}
 
 router = APIRouter(prefix="/student", tags=["student"])
 
@@ -87,7 +93,7 @@ async def get_student_dashboard(authorization: Optional[str] = Header(None)):
         
         # Get resume info
         resume_exists = db.query(Resume).filter(
-            Resume.student_id == student.id
+            Resume.user_id == student.user_id
         ).first() is not None
         
         # Get recent test attempts (limit 5)
@@ -106,8 +112,8 @@ async def get_student_dashboard(authorization: Optional[str] = Header(None)):
         
         return {
             "student_name": student.name,
-            "student_roll": getattr(student, 'roll_number', 'N/A'),
-            "department": student.department.name,
+            "student_roll": f"{student.section}-{student.id:04d}",  # Format: A-0001
+            "department": student.department.name if student.department else "Unknown",
             "metrics": {
                 "total_tests_taken": test_metrics.total_attempts or 0,
                 "total_interviews_taken": interview_metrics.total_attempts or 0,
@@ -151,7 +157,7 @@ async def get_topics(
     limit: int = 20
 ):
     """
-    Get all available topics (with pagination)
+    Get available topics filtered by student's department and section
     """
     db = SessionLocal()
     try:
@@ -159,11 +165,26 @@ async def get_topics(
             raise HTTPException(status_code=401, detail="No authorization token")
         
         user_info = get_current_user(authorization)
+        student_user_id = user_info["user_id"]
         
-        # Paginated query with eager loading
+        # Get student profile with department and section
         from sqlalchemy.orm import joinedload
+        student = db.query(StudentProfile).options(
+            joinedload(StudentProfile.department)
+        ).filter(
+            StudentProfile.user_id == student_user_id
+        ).first()
+        
+        if not student:
+            raise HTTPException(status_code=404, detail="Student profile not found")
+        
+        # Get topics filtered by student's department and section
         topics = db.query(Topic).options(
-            joinedload(Topic.staff)
+            joinedload(Topic.staff),
+            joinedload(Topic.department)
+        ).filter(
+            Topic.department_id == student.department_id,
+            Topic.section == student.section
         ).order_by(
             Topic.created_at.desc()
         ).offset(skip).limit(limit).all()
@@ -174,6 +195,12 @@ async def get_topics(
                 "title": t.title,
                 "description": t.description,
                 "staff_name": t.staff.name,
+                "department_name": t.department.name if t.department else None,
+                "section": t.section,
+                "file_size": t.file_size,
+                "is_indexed": t.is_indexed,
+                "embedding_chunks": t.embedding_chunks,
+                "download_url": f"/student/topics/{t.id}/download",
                 "created_at": t.created_at.isoformat()
             }
             for t in topics
@@ -230,7 +257,7 @@ async def get_tests(
                 "title": t.title,
                 "description": t.description,
                 "topic_title": t.topic.title if t.topic else "General",
-                "staff_name": t.staff.name,
+                "staff_name": t.staff.name if t.staff else "Unknown",
                 "attempted": t.id in student_test_ids,
                 "created_at": t.created_at.isoformat()
             }
@@ -288,7 +315,7 @@ async def get_interviews(
                 "title": i.title,
                 "description": i.description,
                 "topic_title": i.topic.title if i.topic else "General",
-                "staff_name": i.staff.name,
+                "staff_name": i.staff.name if i.staff else "Unknown",
                 "attempted": i.id in student_interview_ids,
                 "created_at": i.created_at.isoformat()
             }
@@ -349,7 +376,7 @@ async def upload_resume(
         
         # Check if student already has a resume and delete old one
         existing_resume = db.query(Resume).filter(
-            Resume.student_id == student.id
+            Resume.user_id == student.user_id
         ).first()
         
         if existing_resume:
@@ -367,9 +394,8 @@ async def upload_resume(
         
         # Create or update resume record
         resume = Resume(
-            student_id=student.id,
-            file_path=file_path,
-            file_size=file_size
+            user_id=student.user_id,
+            file_path=file_path
         )
         db.add(resume)
         db.commit()
@@ -412,7 +438,7 @@ async def get_resume(authorization: Optional[str] = Header(None)):
             raise HTTPException(status_code=404, detail="Student profile not found")
         
         resume = db.query(Resume).filter(
-            Resume.student_id == student.id
+            Resume.user_id == student.user_id
         ).first()
         
         if not resume:
@@ -474,6 +500,62 @@ async def search_topic_for_student(
             "results": results,
             "num_results": len(results)
         }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
+
+
+@router.get("/topics/{topic_id}/download")
+async def download_topic_pdf(
+    topic_id: int,
+    authorization: Optional[str] = Header(None)
+):
+    """
+    Download topic PDF file (only if student's department and section match)
+    """
+    db = SessionLocal()
+    try:
+        if not authorization:
+            raise HTTPException(status_code=401, detail="No authorization token")
+        
+        user_info = get_current_user(authorization)
+        student_user_id = user_info["user_id"]
+        
+        # Get student profile
+        from sqlalchemy.orm import joinedload
+        student = db.query(StudentProfile).options(
+            joinedload(StudentProfile.department)
+        ).filter(
+            StudentProfile.user_id == student_user_id
+        ).first()
+        
+        if not student:
+            raise HTTPException(status_code=404, detail="Student profile not found")
+        
+        # Verify topic exists and belongs to student's department and section
+        topic = db.query(Topic).filter(Topic.id == topic_id).first()
+        
+        if not topic:
+            raise HTTPException(status_code=404, detail="Topic not found")
+        
+        # Verify student has access to this topic
+        if topic.department_id != student.department_id or topic.section != student.section:
+            raise HTTPException(status_code=403, detail="You don't have access to this topic")
+        
+        if not os.path.exists(topic.file_path):
+            raise HTTPException(status_code=404, detail="PDF file not found")
+        
+        from fastapi.responses import FileResponse
+        
+        # Return the file with proper headers for download
+        return FileResponse(
+            topic.file_path,
+            media_type="application/pdf",
+            filename=f"{topic.title}.pdf"
+        )
     except HTTPException:
         raise
     except Exception as e:

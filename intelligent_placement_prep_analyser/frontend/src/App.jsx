@@ -4,6 +4,7 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import AuthPage from "./pages/AuthPage.jsx";
 import StudentDashboard from "./pages/StudentDashboard.jsx";
 import StaffDashboard from "./pages/StaffDashboard.jsx";
+import TestPage from "./pages/TestPage.jsx";
 
 function ProtectedRoute({ children, requiredRole }) {
   const token = localStorage.getItem("access_token");
@@ -39,6 +40,14 @@ function App() {
           element={
             <ProtectedRoute requiredRole="staff">
               <StaffDashboard />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/test/:testId"
+          element={
+            <ProtectedRoute requiredRole="student">
+              <TestPage />
             </ProtectedRoute>
           }
         />

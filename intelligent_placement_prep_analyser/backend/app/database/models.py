@@ -1,9 +1,17 @@
 
-from sqlalchemy import Column, Integer, String, ForeignKey, DateTime, Boolean, Enum as SQLEnum
+from sqlalchemy import Column, Integer, String, ForeignKey, DateTime, Boolean, Enum as SQLEnum, Text, Table
 from sqlalchemy.orm import relationship
 from app.database.db import Base
 from datetime import datetime
 import enum
+
+# Association table for many-to-many relationship between Tests and Topics
+test_topics_association = Table(
+    'test_topics',
+    Base.metadata,
+    Column('test_id', Integer, ForeignKey('tests.id'), primary_key=True),
+    Column('topic_id', Integer, ForeignKey('topics.id'), primary_key=True)
+)
 
 class DepartmentModel(Base):
     __tablename__ = "departments"
@@ -60,6 +68,7 @@ class StudentProfile(Base):
     department = relationship("DepartmentModel", back_populates="students")
     test_attempts = relationship("TestAttempt", back_populates="student")
     interview_attempts = relationship("InterviewAttempt", back_populates="student")
+    created_tests = relationship("Test", back_populates="created_by_student", foreign_keys="Test.created_by_student_id")
 
 class Resume(Base):
     __tablename__ = "resumes"
@@ -89,6 +98,8 @@ class Topic(Base):
     file_path = Column(String, nullable=False)
     file_size = Column(Integer)  # in bytes
     staff_id = Column(Integer, ForeignKey("staff_profiles.id"), nullable=False, index=True)
+    department_id = Column(Integer, ForeignKey("departments.id"), nullable=True, index=True)
+    section = Column(String(1), nullable=True)  # A, B, or C
     is_indexed = Column(Boolean, default=False)  # RAG: Whether topic has been embedded
     embedding_chunks = Column(Integer, default=0)  # RAG: Number of text chunks from PDF
     last_indexed_at = Column(DateTime, nullable=True)  # RAG: When embeddings were created
@@ -96,6 +107,7 @@ class Topic(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     staff = relationship("StaffProfile", foreign_keys=[staff_id])
+    department = relationship("DepartmentModel", foreign_keys=[department_id])
 
 
 class Test(Base):
@@ -103,12 +115,34 @@ class Test(Base):
     id = Column(Integer, primary_key=True)
     title = Column(String, nullable=False)
     description = Column(String)
-    topic_id = Column(Integer, ForeignKey("topics.id"))
-    staff_id = Column(Integer, ForeignKey("staff_profiles.id"), nullable=False, index=True)
+    topic_id = Column(Integer, ForeignKey("topics.id"))  # Backward compatibility: single topic
+    staff_id = Column(Integer, ForeignKey("staff_profiles.id"), index=True)  # Optional: staff-created
+    created_by_student_id = Column(Integer, ForeignKey("student_profiles.id"), index=True)  # Student-created tests
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
     
     staff = relationship("StaffProfile", foreign_keys=[staff_id])
-    topic = relationship("Topic", foreign_keys=[topic_id])
+    topic = relationship("Topic", foreign_keys=[topic_id], primaryjoin="Test.topic_id == Topic.id")
+    topics = relationship("Topic", secondary=test_topics_association)  # Many-to-many: topics
+    created_by_student = relationship("StudentProfile", back_populates="created_tests", foreign_keys=[created_by_student_id])
+    questions = relationship("TestQuestion", back_populates="test")
+
+
+class TestQuestion(Base):
+    __tablename__ = "test_questions"
+    id = Column(Integer, primary_key=True)
+    test_id = Column(Integer, ForeignKey("tests.id"), nullable=False, index=True)
+    question_text = Column(Text, nullable=False)
+    option_a = Column(String, nullable=False)
+    option_b = Column(String, nullable=False)
+    option_c = Column(String, nullable=False)
+    option_d = Column(String, nullable=False)
+    correct_option = Column(String, nullable=False)  # A, B, C, D
+    explanation = Column(Text)
+    topic_id = Column(Integer, ForeignKey("topics.id"))
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    test = relationship("Test", back_populates="questions")
+    topic = relationship("Topic")
 
 
 class TestAttempt(Base):

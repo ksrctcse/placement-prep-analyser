@@ -146,7 +146,7 @@ async def get_dashboard(authorization: Optional[str] = Header(None)):
             "avg_student_score": avg_score,
             "recent_tests": recent_tests,
             "staff_name": staff.name,
-            "department": staff.department.name
+            "department": staff.department.name if staff.department else "Unknown"
         }
     except HTTPException:
         raise
@@ -160,10 +160,12 @@ async def get_dashboard(authorization: Optional[str] = Header(None)):
 async def get_staff_topics(
     authorization: Optional[str] = Header(None),
     skip: int = 0,
-    limit: int = 20
+    limit: int = 20,
+    department_id: Optional[int] = None,
+    section: Optional[str] = None
 ):
     """
-    Get topics created by staff member (with pagination)
+    Get topics created by staff member (with optional department/section filtering)
     """
     db = SessionLocal()
     try:
@@ -180,10 +182,22 @@ async def get_staff_topics(
         if not staff:
             raise HTTPException(status_code=404, detail="Staff profile not found")
         
-        # Paginated query with limit
-        topics = db.query(Topic).filter(
+        # Build query with filters
+        from sqlalchemy.orm import joinedload
+        query = db.query(Topic).options(
+            joinedload(Topic.department)
+        ).filter(
             Topic.staff_id == staff.id
-        ).order_by(
+        )
+        
+        # Apply optional filters
+        if department_id is not None:
+            query = query.filter(Topic.department_id == department_id)
+        if section is not None:
+            query = query.filter(Topic.section == section)
+        
+        # Paginated query with limit
+        topics = query.order_by(
             Topic.created_at.desc()
         ).offset(skip).limit(limit).all()
         
@@ -196,10 +210,77 @@ async def get_staff_topics(
                 "is_indexed": t.is_indexed,
                 "embedding_chunks": t.embedding_chunks,
                 "created_at": t.created_at.isoformat(),
-                "file_path": t.file_path
+                "file_path": t.file_path,
+                "department_id": t.department_id,
+                "department_name": t.department.name if t.department else None,
+                "section": t.section
             }
             for t in topics
         ]
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
+
+
+@router.get("/topics/filters/options")
+async def get_topic_filter_options(authorization: Optional[str] = Header(None)):
+    """
+    Get available department and section filter options for staff's topics
+    Returns departments and sections in order of first appearance
+    """
+    db = SessionLocal()
+    try:
+        if not authorization:
+            raise HTTPException(status_code=401, detail="No authorization token")
+        
+        user_info = get_current_user(authorization)
+        staff_user_id = user_info["user_id"]
+        
+        staff = db.query(StaffProfile).filter(
+            StaffProfile.user_id == staff_user_id
+        ).first()
+        
+        if not staff:
+            raise HTTPException(status_code=404, detail="Staff profile not found")
+        
+        from sqlalchemy.orm import joinedload
+        # Get all topics for this staff, ordered by created_at (first added first)
+        topics = db.query(Topic).options(
+            joinedload(Topic.department)
+        ).filter(
+            Topic.staff_id == staff.id
+        ).order_by(
+            Topic.created_at.asc()
+        ).all()
+        
+        # Extract unique departments and sections, preserving order of first appearance
+        departments_dict = {}  # id -> name
+        sections_list = []
+        
+        for topic in topics:
+            # Track departments
+            if topic.department_id and topic.department_id not in departments_dict:
+                departments_dict[topic.department_id] = topic.department.name if topic.department else None
+            
+            # Track sections
+            if topic.section and topic.section not in sections_list:
+                sections_list.append(topic.section)
+        
+        # Convert departments dict to list of objects with id as first added
+        departments = [
+            {"id": dept_id, "name": dept_name}
+            for dept_id, dept_name in departments_dict.items()
+        ]
+        
+        return {
+            "departments": departments,
+            "sections": sections_list,
+            "default_department": departments[0]["id"] if departments else None,
+            "default_section": sections_list[0] if sections_list else None
+        }
     except HTTPException:
         raise
     except Exception as e:
@@ -286,6 +367,8 @@ async def upload_topic(
     title: str = Form(...),
     file: UploadFile = File(...),
     description: Optional[str] = Form(None),
+    department_id: Optional[int] = Form(None),
+    section: Optional[str] = Form(None),
     authorization: Optional[str] = Header(None)
 ):
     """
@@ -339,6 +422,8 @@ async def upload_topic(
             file_path=file_path,
             file_size=file_size,
             staff_id=staff.id,
+            department_id=department_id,
+            section=section,
             is_indexed=False,
             embedding_chunks=0
         )

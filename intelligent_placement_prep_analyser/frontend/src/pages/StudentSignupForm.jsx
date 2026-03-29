@@ -36,9 +36,17 @@ export default function StudentSignupForm({ onBack, onSignupSuccess }) {
   const fetchDepartments = async () => {
     try {
       const response = await authService.getDepartments();
-      setDepartments(response.data);
+      console.log('Departments API Response:', response);
+      console.log('Response Data:', response.data);
+      
+      // Handle both array and object responses
+      const deptData = Array.isArray(response.data) ? response.data : response.data.data || [];
+      console.log('Processed Departments:', deptData);
+      
+      setDepartments(deptData);
     } catch (err) {
-      setError('Failed to load departments');
+      console.error('Error fetching departments:', err);
+      setError('Failed to load departments: ' + (err.message || 'Unknown error'));
     }
   };
 

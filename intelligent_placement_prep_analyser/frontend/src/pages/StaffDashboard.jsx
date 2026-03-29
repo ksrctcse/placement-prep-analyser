@@ -14,17 +14,30 @@ const StaffDashboard = () => {
   const [uploadFile, setUploadFile] = useState(null);
   const [uploadTitle, setUploadTitle] = useState('');
   const [uploadDescription, setUploadDescription] = useState('');
+  const [uploadDepartment, setUploadDepartment] = useState(null);
+  const [uploadSection, setUploadSection] = useState(null);
+  const [departments, setDepartments] = useState([]);
   const [uploadLoading, setUploadLoading] = useState(false);
   const [message, setMessage] = useState({ type: '', text: '' });
   const [dragActive, setDragActive] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState({ show: false, topicId: null, title: '' });
   const [reindexLoading, setReindexLoading] = useState(null); // Track which topic is being re-indexed
+  
+  // Filter state for topics view
+  const [filterDepartment, setFilterDepartment] = useState(null);
+  const [filterSection, setFilterSection] = useState(null);
+  const [availableDepartments, setAvailableDepartments] = useState([]);
+  const [availableSections, setAvailableSections] = useState([]);
+  const [filterOptionsLoading, setFilterOptionsLoading] = useState(false);
+  
   const fileInputRef = React.useRef(null);
   const navigate = useNavigate();
 
   const API_BASE = 'http://localhost:8003';
   const token = localStorage.getItem('access_token');
   const authHeader = `Bearer ${token}`;
+
+  const sections = ['A', 'B', 'C'];
 
   useEffect(() => {
     if (!token) {
@@ -35,7 +48,9 @@ const StaffDashboard = () => {
     if (activeMenu === 'dashboard') {
       fetchDashboardData();
     } else if (activeMenu === 'topics') {
-      fetchTopics();
+      fetchFilterOptions();
+    } else if (activeMenu === 'upload') {
+      fetchDepartments();
     } else if (activeMenu === 'performance') {
       fetchPerformanceMetrics();
     }
@@ -55,9 +70,14 @@ const StaffDashboard = () => {
     }
   };
 
-  const fetchTopics = async () => {
+  const fetchTopics = async (deptId = null, sec = null) => {
     try {
-      const response = await axios.get(`${API_BASE}/staff/topics`, {
+      const params = new URLSearchParams();
+      if (deptId !== null) params.append('department_id', deptId);
+      if (sec !== null) params.append('section', sec);
+      
+      const url = `${API_BASE}/staff/topics${params.toString() ? '?' + params.toString() : ''}`;
+      const response = await axios.get(url, {
         headers: { 'Authorization': authHeader }
       });
       setTopics(response.data);
@@ -66,6 +86,37 @@ const StaffDashboard = () => {
       setMessage({ type: 'error', text: 'Failed to load topics' });
     }
   };
+
+  const fetchFilterOptions = async () => {
+    try {
+      setFilterOptionsLoading(true);
+      const response = await axios.get(`${API_BASE}/staff/topics/filters/options`, {
+        headers: { 'Authorization': authHeader }
+      });
+      
+      setAvailableDepartments(response.data.departments);
+      setAvailableSections(response.data.sections);
+      
+      // Set defaults to first added value
+      if (response.data.default_department) {
+        setFilterDepartment(response.data.default_department);
+      }
+      if (response.data.default_section) {
+        setFilterSection(response.data.default_section);
+      }
+    } catch (error) {
+      console.error('Error fetching filter options:', error);
+    } finally {
+      setFilterOptionsLoading(false);
+    }
+  };
+
+  // Fetch topics when filters change
+  useEffect(() => {
+    if (activeMenu === 'topics' && filterDepartment !== null && filterSection !== null) {
+      fetchTopics(filterDepartment, filterSection);
+    }
+  }, [filterDepartment, filterSection, activeMenu]);
 
   const deleteTopic = async (topicId) => {
     try {
@@ -114,6 +165,16 @@ const StaffDashboard = () => {
     } catch (error) {
       console.error('Error fetching metrics:', error);
       setMessage({ type: 'error', text: 'Failed to load performance metrics' });
+    }
+  };
+
+  const fetchDepartments = async () => {
+    try {
+      const response = await axios.get(`${API_BASE}/auth/departments`);
+      setDepartments(response.data);
+    } catch (error) {
+      console.error('Error fetching departments:', error);
+      setMessage({ type: 'error', text: 'Failed to load departments' });
     }
   };
 
@@ -187,6 +248,12 @@ const StaffDashboard = () => {
       formData.append('title', uploadTitle);
       formData.append('description', uploadDescription);
       formData.append('file', uploadFile);
+      if (uploadDepartment) {
+        formData.append('department_id', uploadDepartment);
+      }
+      if (uploadSection) {
+        formData.append('section', uploadSection);
+      }
 
       const response = await axios.post(
         `${API_BASE}/staff/upload-topic`,
@@ -202,6 +269,8 @@ const StaffDashboard = () => {
       setMessage({ type: 'success', text: response.data.message });
       setUploadTitle('');
       setUploadDescription('');
+      setUploadDepartment(null);
+      setUploadSection(null);
       setUploadFile(null);
       setTimeout(() => {
         setActiveMenu('topics');
@@ -350,6 +419,46 @@ const StaffDashboard = () => {
         {activeMenu === 'topics' && (
           <div className="topics-view">
             <h1>My Topics</h1>
+            
+            {/* Filters */}
+            <div className="topics-filters">
+              <div className="filter-group">
+                <label htmlFor="filter-department">Department:</label>
+                <select
+                  id="filter-department"
+                  value={filterDepartment || ''}
+                  onChange={(e) => setFilterDepartment(e.target.value ? parseInt(e.target.value) : null)}
+                  disabled={filterOptionsLoading}
+                  className="filter-select"
+                >
+                  <option value="">All Departments</option>
+                  {availableDepartments.map((dept) => (
+                    <option key={dept.id} value={dept.id}>
+                      {dept.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              
+              <div className="filter-group">
+                <label htmlFor="filter-section">Section:</label>
+                <select
+                  id="filter-section"
+                  value={filterSection || ''}
+                  onChange={(e) => setFilterSection(e.target.value || null)}
+                  disabled={filterOptionsLoading}
+                  className="filter-select"
+                >
+                  <option value="">All Sections</option>
+                  {availableSections.map((sec) => (
+                    <option key={sec} value={sec}>
+                      Section {sec}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            
             {topics.length > 0 ? (
               <div className="topics-grid">
                 {topics.map((topic) => (
@@ -365,6 +474,11 @@ const StaffDashboard = () => {
                       <span className="file-size">
                         📄 {(topic.file_size / 1024).toFixed(2)} KB
                       </span>
+                      {topic.department_name && (
+                        <span className="topic-dept-badge">
+                          {topic.department_name} - Section {topic.section}
+                        </span>
+                      )}
                       <span className="status-badge">
                         {topic.is_indexed ? (
                           <span className="indexed">✓ Indexed ({topic.embedding_chunks} chunks)</span>
@@ -428,6 +542,42 @@ const StaffDashboard = () => {
                   rows="4"
                   disabled={uploadLoading}
                 />
+              </div>
+
+              <div className="form-row">
+                <div className="form-group form-col-2">
+                  <label htmlFor="department">Department *</label>
+                  <select
+                    id="department"
+                    value={uploadDepartment || ''}
+                    onChange={(e) => setUploadDepartment(e.target.value ? parseInt(e.target.value) : null)}
+                    disabled={uploadLoading}
+                  >
+                    <option value="">Select Department</option>
+                    {departments.map((dept) => (
+                      <option key={dept.id} value={dept.id}>
+                        {dept.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="form-group form-col-2">
+                  <label htmlFor="section">Section *</label>
+                  <select
+                    id="section"
+                    value={uploadSection || ''}
+                    onChange={(e) => setUploadSection(e.target.value || null)}
+                    disabled={uploadLoading}
+                  >
+                    <option value="">Select Section</option>
+                    {sections.map((sec) => (
+                      <option key={sec} value={sec}>
+                        {sec}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
 
               <div className="form-group">
