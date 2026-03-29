@@ -1,11 +1,12 @@
 
 fastapi
 uvicorn
-python-jose
-passlib
+python-jose[cryptography]
+argon2-cffi
 sqlalchemy
 psycopg2-binary
 langchain
+langchain-community
 langchain-google-genai
 google-generativeai
 chromadb
@@ -15,3 +16,7 @@ speechrecognition
 pydub
 python-dotenv
 pdfplumber
+pydantic[email]
+pydantic-settings
+sentence-transformers
+cryptography
