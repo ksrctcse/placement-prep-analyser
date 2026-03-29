@@ -3,6 +3,8 @@ fastapi
 uvicorn
 python-jose
 passlib
+argon2-cffi
+pydantic[email]
 sqlalchemy
 psycopg2-binary
 langchain
