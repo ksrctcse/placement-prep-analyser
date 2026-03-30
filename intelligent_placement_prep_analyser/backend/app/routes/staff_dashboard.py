@@ -691,6 +691,7 @@ async def get_performance_metrics(authorization: Optional[str] = Header(None)):
         top_performers = db.query(
             TestAttempt.student_id,
             SP.name,
+            SP.roll_number,
             func.avg(TestAttempt.score).label("avg_score")
         ).join(
             SP,
@@ -702,11 +703,11 @@ async def get_performance_metrics(authorization: Optional[str] = Header(None)):
             Test.staff_id == staff.id,
             TestAttempt.score.isnot(None)
         ).group_by(
-            TestAttempt.student_id, SP.name
+            TestAttempt.student_id, SP.name, SP.roll_number
         ).order_by(func.avg(TestAttempt.score).desc()).limit(5).all()
         
         metrics["top_performers"] = [
-            {"student_id": p[0], "name": p[1], "avg_score": round(float(p[2]), 2)}
+            {"student_id": p[0], "name": p[1], "roll_number": p[2], "avg_score": round(float(p[3]), 2)}
             for p in top_performers
         ]
         

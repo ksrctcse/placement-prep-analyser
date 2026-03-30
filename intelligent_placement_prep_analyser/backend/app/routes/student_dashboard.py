@@ -147,7 +147,7 @@ async def get_student_dashboard(authorization: Optional[str] = Header(None)):
         
         return {
             "student_name": student.name,
-            "student_roll": f"{student.section}-{student.id:04d}",  # Format: A-0001
+            "student_roll": student.roll_number if student.roll_number else f"{student.section}-{student.id:04d}",
             "department": student.department.name if student.department else "Unknown",
             "metrics": {
                 "total_tests_taken": test_metrics.total_attempts or 0,
@@ -267,11 +267,20 @@ async def get_tests(
         
         # Get paginated tests with eager loading
         from sqlalchemy.orm import joinedload
+        from sqlalchemy import or_, and_
         tests = db.query(Test).options(
             joinedload(Test.topic).joinedload(Topic.staff),
             joinedload(Test.staff),
             joinedload(Test.topics),
             joinedload(Test.questions)
+        ).filter(
+            or_(
+                Test.created_by_student_id == student.id,  # Tests created by this student
+                and_(
+                    Test.created_by_student_id.is_(None),  # NOT created by a student
+                    Test.staff_id.isnot(None)  # Created directly by staff
+                )
+            )
         ).order_by(
             Test.created_at.desc()
         ).offset(skip).limit(limit).all()
@@ -376,17 +385,35 @@ async def get_topic_tests(
             raise HTTPException(status_code=404, detail="Topic not found")
         
         # Get tests created from this topic (check via test.topics relationship)
+        # Filter by: tests created by this student OR tests created directly by staff (not by students)
+        from sqlalchemy import or_, and_
         tests = db.query(Test).options(
             joinedload(Test.questions)
         ).filter(
-            Test.topics.any(Topic.id == topic_id)
+            Test.topics.any(Topic.id == topic_id),
+            or_(
+                Test.created_by_student_id == student.id,  # Tests created by this student
+                and_(
+                    Test.created_by_student_id.is_(None),  # NOT created by a student
+                    Test.staff_id.isnot(None)  # Created directly by staff
+                )
+            )
         ).order_by(Test.created_at.desc()).all()
         
         # If no tests found via topics relationship, try single topic
         if not tests:
             tests = db.query(Test).options(
                 joinedload(Test.questions)
-            ).filter(Test.topic_id == topic_id).order_by(Test.created_at.desc()).all()
+            ).filter(
+                Test.topic_id == topic_id,
+                or_(
+                    Test.created_by_student_id == student.id,  # Tests created by this student
+                    and_(
+                        Test.created_by_student_id.is_(None),  # NOT created by a student
+                        Test.staff_id.isnot(None)  # Created directly by staff
+                    )
+                )
+            ).order_by(Test.created_at.desc()).all()
         
         # Get student's test attempts with details
         student_attempts = db.query(TestAttempt).options(

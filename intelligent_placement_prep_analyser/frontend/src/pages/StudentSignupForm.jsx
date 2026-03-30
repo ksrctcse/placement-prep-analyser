@@ -12,6 +12,7 @@ export default function StudentSignupForm({ onBack, onSignupSuccess }) {
   const [formData, setFormData] = useState({
     name: '',
     email: '',
+    rollNumber: '',
     departmentId: null,
     section: null,
     password: '',
@@ -67,6 +68,10 @@ export default function StudentSignupForm({ onBack, onSignupSuccess }) {
       setError('Please enter a valid email address');
       return false;
     }
+    if (!formData.rollNumber.trim()) {
+      setError('Roll number is required');
+      return false;
+    }
     if (!formData.departmentId) {
       setError('Please select a department');
       return false;
@@ -116,6 +121,7 @@ export default function StudentSignupForm({ onBack, onSignupSuccess }) {
     setFormData({
       name: '',
       email: '',
+      rollNumber: '',
       departmentId: null,
       section: null,
       password: '',
@@ -135,6 +141,7 @@ export default function StudentSignupForm({ onBack, onSignupSuccess }) {
       await authService.studentSignup(
         formData.name,
         formData.email,
+        formData.rollNumber,
         formData.departmentId,
         formData.section,
         formData.password,
@@ -195,6 +202,25 @@ export default function StudentSignupForm({ onBack, onSignupSuccess }) {
               icon="pi pi-times"
               className="p-button-danger"
               onClick={() => setFormData((prev) => ({ ...prev, email: '' }))}
+            />
+          </div>
+        </div>
+
+        <div className="form-group">
+          <label htmlFor="student-roll">Roll Number</label>
+          <div className="p-inputgroup">
+            <InputText
+              id="student-roll"
+              name="rollNumber"
+              value={formData.rollNumber}
+              onChange={handleChange}
+              placeholder="Enter your roll number"
+              className="w-full"
+            />
+            <Button
+              icon="pi pi-times"
+              className="p-button-danger"
+              onClick={() => setFormData((prev) => ({ ...prev, rollNumber: '' }))}
             />
           </div>
         </div>

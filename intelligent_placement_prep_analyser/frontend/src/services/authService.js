@@ -49,10 +49,11 @@ export const authService = {
       confirm_password: confirmPassword,
     }),
 
-  studentSignup: (name, email, departmentId, section, password, confirmPassword) =>
+  studentSignup: (name, email, rollNumber, departmentId, section, password, confirmPassword) =>
     api.post('/student/signup', {
       name,
       email,
+      roll_number: rollNumber,
       department_id: departmentId,
       section,
       password,

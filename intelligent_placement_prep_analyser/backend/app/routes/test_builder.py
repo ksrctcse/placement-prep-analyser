@@ -281,6 +281,19 @@ async def create_test(
         if not student:
             raise HTTPException(status_code=404, detail="Student profile not found")
         
+        # Check for duplicate test name for this student
+        test_title = title.strip()
+        existing_test = db.query(Test).filter(
+            Test.title.ilike(test_title),  # Case-insensitive search
+            Test.created_by_student_id == student.id
+        ).first()
+        
+        if existing_test:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"You have already created a test with the name '{test_title}'. Please use a different name."
+            )
+        
         session_data = test_builder_sessions.get(user_id, {})
         selected_topics = session_data.get("topics", [])
         mcqs = session_data.get("mcqs", [])
@@ -295,8 +308,6 @@ async def create_test(
         
         # Create test with user-provided title
         topics = db.query(Topic).filter(Topic.id.in_(selected_topics)).all()
-        
-        test_title = title.strip()
         
         # Get primary topic ID (first selected topic) and staff ID
         primary_topic_id = selected_topics[0] if selected_topics else None
@@ -395,12 +406,22 @@ async def get_test_questions(
             raise HTTPException(status_code=404, detail="Student profile not found")
         
         # Get test with questions
+        from sqlalchemy import or_, and_
         test = db.query(Test).options(
             joinedload(Test.questions)
-        ).filter(Test.id == test_id).first()
+        ).filter(
+            Test.id == test_id,
+            or_(
+                Test.created_by_student_id == student.id,  # Test created by this student
+                and_(
+                    Test.created_by_student_id.is_(None),  # NOT created by a student
+                    Test.staff_id.isnot(None)  # Created directly by staff
+                )
+            )
+        ).first()
         
         if not test:
-            raise HTTPException(status_code=404, detail="Test not found")
+            raise HTTPException(status_code=404, detail="Test not found or not accessible")
         
         # Return test details with questions
         return {
@@ -541,12 +562,22 @@ async def submit_test(
             raise HTTPException(status_code=404, detail="Student profile not found")
         
         # Get test with questions
+        from sqlalchemy import or_, and_
         test = db.query(Test).options(
             joinedload(Test.questions)
-        ).filter(Test.id == request.test_id).first()
+        ).filter(
+            Test.id == request.test_id,
+            or_(
+                Test.created_by_student_id == student.id,  # Test created by this student
+                and_(
+                    Test.created_by_student_id.is_(None),  # NOT created by a student
+                    Test.staff_id.isnot(None)  # Created directly by staff
+                )
+            )
+        ).first()
         
         if not test:
-            raise HTTPException(status_code=404, detail="Test not found")
+            raise HTTPException(status_code=404, detail="Test not found or not accessible")
         
         # Calculate score
         total_questions = len(test.questions)
@@ -749,6 +780,7 @@ async def get_student_test_history(
         return {
             "success": True,
             "student_name": student.name,
+            "student_roll": student.roll_number if student.roll_number else f"{student.section}-{student.id:04d}",
             "department": student.department.name if student.department else "Unknown",
             "section": student.section,
             "total_tests_attempted": len(test_attempts),
@@ -811,6 +843,7 @@ async def get_topic_performance_summary(
         return {
             "success": True,
             "student_name": student.name,
+            "student_roll": student.roll_number if student.roll_number else f"{student.section}-{student.id:04d}",
             "total_topics_attempted": total_topics_attempted,
             "mastered_topics": mastered_topics,
             "overall_average_percentage": avg_percentage,
@@ -884,6 +917,7 @@ async def get_recent_test_results(
         return {
             "success": True,
             "student_name": student.name,
+            "student_roll": student.roll_number if student.roll_number else f"{student.section}-{student.id:04d}",
             "recent_results": results
         }
     

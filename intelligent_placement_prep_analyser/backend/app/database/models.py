@@ -60,6 +60,7 @@ class StudentProfile(Base):
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id"), unique=True, nullable=False)
     name = Column(String, nullable=False)
+    roll_number = Column(String, nullable=True)  # Student roll number
     department_id = Column(Integer, ForeignKey("departments.id"), nullable=False)
     section = Column(String(1), nullable=False)  # A, B, C
     created_at = Column(DateTime, default=datetime.utcnow)

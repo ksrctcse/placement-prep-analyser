@@ -72,7 +72,8 @@ async def get_performance_dashboard_report(
         if total_tests == 0:
             return {
                 "success": True,
-                "students_name": student.name,
+                "student_name": student.name,
+                "student_roll": student.roll_number if student.roll_number else f"{student.section}-{student.id:04d}",
                 "department": student.department.name if student.department else "Unknown",
                 "section": student.section,
                 "overall_stats": {
@@ -161,6 +162,7 @@ async def get_performance_dashboard_report(
         return {
             "success": True,
             "student_name": student.name,
+            "student_roll": student.roll_number if student.roll_number else f"{student.section}-{student.id:04d}",
             "department": student.department.name if student.department else "Unknown",
             "section": student.section,
             "overall_stats": {

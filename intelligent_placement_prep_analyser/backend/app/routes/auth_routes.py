@@ -97,6 +97,7 @@ class StaffSignupRequest(BaseModel):
 class StudentSignupRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
     email: EmailStr
+    roll_number: str = Field(..., min_length=1, max_length=50)
     department_id: int
     section: str = Field(..., pattern="^[A-C]$")  # A, B, C
     password: str = Field(..., min_length=8)
@@ -253,6 +254,7 @@ async def student_signup(request: StudentSignupRequest):
         student_profile = StudentProfile(
             user_id=user.id,
             name=request.name,
+            roll_number=request.roll_number,
             department_id=request.department_id,
             section=request.section
         )
