@@ -9,7 +9,11 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
 from app.database.db import Base, engine
-from app.database.models import User, Resume, InterviewReport, DepartmentModel, StaffProfile, StudentProfile, Topic, Test, TestAttempt, Interview, InterviewAttempt
+from app.database.models import (
+    User, Resume, InterviewReport, DepartmentModel, StaffProfile, StudentProfile, 
+    Topic, Test, TestAttempt, TestQuestion, TestAttemptDetail, TestAnalysis,
+    TopicPerformance, Interview, InterviewAttempt
+)
 
 
 def create_all_tables():

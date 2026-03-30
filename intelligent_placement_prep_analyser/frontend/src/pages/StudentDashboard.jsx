@@ -13,6 +13,9 @@ const StudentDashboard = () => {
   const [topics, setTopics] = useState([]);
   const [tests, setTests] = useState([]);
   const [interviews, setInterviews] = useState([]);
+  const [testResults, setTestResults] = useState([]);
+  const [topicPerformance, setTopicPerformance] = useState(null);
+  const [selectedTestAnalysis, setSelectedTestAnalysis] = useState(null);
   const [resumeInfo, setResumeInfo] = useState(null);
   const [uploadingResume, setUploadingResume] = useState(false);
   const [resumeFile, setResumeFile] = useState(null);
@@ -24,6 +27,7 @@ const StudentDashboard = () => {
   const [isGeneratingMCQs, setIsGeneratingMCQs] = useState(false);
   const [isCreatingTest, setIsCreatingTest] = useState(false);
   const [testName, setTestName] = useState('');
+  const [loadingResults, setLoadingResults] = useState(false);
   const fileInputRef = React.useRef(null);
   const navigate = useNavigate();
 
@@ -45,6 +49,9 @@ const StudentDashboard = () => {
       fetchTests();
     } else if (activeMenu === 'interviews') {
       fetchInterviews();
+    } else if (activeMenu === 'results') {
+      fetchTestResults();
+      fetchTopicPerformance();
     } else if (activeMenu === 'resume') {
       fetchResumeInfo();
     }
@@ -110,6 +117,46 @@ const StudentDashboard = () => {
     } catch (error) {
       console.error('Error fetching resume:', error);
       setMessage({ type: 'error', text: 'Failed to load resume info' });
+    }
+  };
+
+  const fetchTestResults = async () => {
+    setLoadingResults(true);
+    try {
+      const response = await axios.get(`${API_BASE}/student/test-builder/student-test-history`, {
+        headers: { 'Authorization': authHeader }
+      });
+      setTestResults(response.data.test_history || []);
+    } catch (error) {
+      console.error('Error fetching test results:', error);
+      setMessage({ type: 'error', text: 'Failed to load test results' });
+    } finally {
+      setLoadingResults(false);
+    }
+  };
+
+  const fetchTopicPerformance = async () => {
+    try {
+      const response = await axios.get(`${API_BASE}/student/test-builder/topic-performance-summary`, {
+        headers: { 'Authorization': authHeader }
+      });
+      setTopicPerformance(response.data);
+    } catch (error) {
+      console.error('Error fetching topic performance:', error);
+      setMessage({ type: 'error', text: 'Failed to load topic performance' });
+    }
+  };
+
+  const fetchTestAnalysis = async (testAttemptId) => {
+    try {
+      const response = await axios.get(
+        `${API_BASE}/student/test-builder/test-analysis/${testAttemptId}`,
+        { headers: { 'Authorization': authHeader } }
+      );
+      setSelectedTestAnalysis(response.data.analysis);
+    } catch (error) {
+      console.error('Error fetching test analysis:', error);
+      setMessage({ type: 'error', text: 'Failed to load test analysis' });
     }
   };
 
@@ -350,6 +397,12 @@ const StudentDashboard = () => {
             onClick={() => setActiveMenu('tests')}
           >
             📝 Take Test
+          </button>
+          <button
+            className={`menu-item ${activeMenu === 'results' ? 'active' : ''}`}
+            onClick={() => setActiveMenu('results')}
+          >
+            📊 Test Results
           </button>
           <button
             className={`menu-item ${activeMenu === 'interviews' ? 'active' : ''}`}
@@ -656,6 +709,197 @@ const StudentDashboard = () => {
               </div>
             ) : (
               <p className="no-data">No interviews available yet</p>
+            )}
+          </div>
+        )}
+
+        {/* Test Results View */}
+        {activeMenu === 'results' && (
+          <div className="results-view">
+            <h1>Test Results & Analysis</h1>
+
+            {loadingResults ? (
+              <p className="loading">Loading test results...</p>
+            ) : (
+              <>
+                {/* Topic Performance Summary */}
+                {topicPerformance && topicPerformance.topic_details && topicPerformance.topic_details.length > 0 && (
+                  <div className="performance-summary">
+                    <div className="summary-header">
+                      <h2>📊 Topic Performance Summary</h2>
+                      <div className="summary-stats">
+                        <div className="stat">
+                          <span className="label">Overall Average:</span>
+                          <span className="value">{topicPerformance.overall_average_percentage}%</span>
+                        </div>
+                        <div className="stat">
+                          <span className="label">Mastered Topics:</span>
+                          <span className="value">{topicPerformance.mastered_topics}/{topicPerformance.total_topics_attempted}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="topics-grid">
+                      {topicPerformance.topic_details.map((topic) => (
+                        <div key={topic.topic_id} className={`topic-card ${topic.proficiency_level}`}>
+                          <div className="topic-header">
+                            <h3>{topic.topic_name}</h3>
+                            <span className={`badge ${topic.mastery_status ? 'mastered' : ''}`}>
+                              {topic.proficiency_level}
+                            </span>
+                          </div>
+                          <div className="topic-stats">
+                            <div className="stat-item">
+                              <span className="label">Average:</span>
+                              <span className="value">{topic.average_percentage}%</span>
+                            </div>
+                            <div className="stat-item">
+                              <span className="label">Last Attempt:</span>
+                              <span className="value">{topic.last_attempt_percentage}%</span>
+                            </div>
+                            <div className="stat-item">
+                              <span className="label">Attempts:</span>
+                              <span className="value">{topic.total_attempts}</span>
+                            </div>
+                          </div>
+                          <div className="progress-bar">
+                            <div 
+                              className="progress-fill" 
+                              style={{width: `${topic.average_percentage}%`}}
+                            ></div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Test History */}
+                {testResults && testResults.length > 0 ? (
+                  <div className="test-history">
+                    <h2>📝 Test History</h2>
+                    <div className="test-list">
+                      {testResults.map((result) => (
+                        <div key={result.test_attempt_id} className={`test-item ${result.pass_status ? 'passed' : 'failed'}`}>
+                          <div className="test-info-left">
+                            <h3>{result.test_title}</h3>
+                            <p className="date">
+                              {new Date(result.attempted_at).toLocaleDateString()} at {new Date(result.attempted_at).toLocaleTimeString()}
+                            </p>
+                          </div>
+                          <div className="test-score">
+                            <div className={`score-badge ${result.pass_status ? 'passed' : 'failed'}`}>
+                              {result.score}%
+                            </div>
+                            <p className={`status ${result.pass_status ? 'passed' : 'failed'}`}>
+                              {result.pass_status ? '✓ Passed' : '✗ Failed'}
+                            </p>
+                          </div>
+                          {result.has_analysis && (
+                            <button 
+                              className="view-analysis-btn"
+                              onClick={() => fetchTestAnalysis(result.test_attempt_id)}
+                            >
+                              View Analysis →
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <p className="no-data">No tests attempted yet. Start taking tests to see your results!</p>
+                )}
+
+                {/* Selected Test Analysis */}
+                {selectedTestAnalysis && (
+                  <div className="analysis-detail">
+                    <button 
+                      className="close-analysis"
+                      onClick={() => setSelectedTestAnalysis(null)}
+                    >
+                      ✕ Close
+                    </button>
+
+                    <h2>Detailed Test Analysis</h2>
+
+                    {/* Score Overview */}
+                    <div className="analysis-overview">
+                      <div className="score-card">
+                        <h3>Score</h3>
+                        <div className="big-score">{selectedTestAnalysis.overall_percentage}%</div>
+                        <p>{selectedTestAnalysis.correct_answers}/{selectedTestAnalysis.total_questions} correct</p>
+                      </div>
+
+                      <div className="metrics-card">
+                        <h3>Breakdown</h3>
+                        <div className="metric">
+                          <span>Correct Answers:</span>
+                          <span className="value correct">{selectedTestAnalysis.correct_answers}</span>
+                        </div>
+                        <div className="metric">
+                          <span>Incorrect Answers:</span>
+                          <span className="value incorrect">{selectedTestAnalysis.incorrect_answers}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Strengths, Weaknesses, Recommendations */}
+                    <div className="analysis-content">
+                      {selectedTestAnalysis.strengths && selectedTestAnalysis.strengths.length > 0 && (
+                        <div className="analysis-section strengths">
+                          <h3>✓ Strengths</h3>
+                          <ul>
+                            {selectedTestAnalysis.strengths.map((strength, idx) => (
+                              <li key={idx}>{strength}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+
+                      {selectedTestAnalysis.weaknesses && selectedTestAnalysis.weaknesses.length > 0 && (
+                        <div className="analysis-section weaknesses">
+                          <h3>✗ Areas for Improvement</h3>
+                          <ul>
+                            {selectedTestAnalysis.weaknesses.map((weakness, idx) => (
+                              <li key={idx}>{weakness}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+
+                      {selectedTestAnalysis.recommendations && selectedTestAnalysis.recommendations.length > 0 && (
+                        <div className="analysis-section recommendations">
+                          <h3>💡 Recommendations</h3>
+                          <ul>
+                            {selectedTestAnalysis.recommendations.map((rec, idx) => (
+                              <li key={idx}>{rec}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Topic-wise Analysis */}
+                    {selectedTestAnalysis.topic_wise_analysis && Object.keys(selectedTestAnalysis.topic_wise_analysis).length > 0 && (
+                      <div className="topic-analysis">
+                        <h3>Performance by Topic</h3>
+                        <div className="topic-overview">
+                          {Object.values(selectedTestAnalysis.topic_wise_analysis).map((topic) => (
+                            <div key={topic.topic_id} className="topic-result">
+                              <h4>{topic.topic_name}</h4>
+                              <p>
+                                <span className="correct">{topic.correct_answers}/{topic.total_questions}</span> correct
+                                {' '}(<span className={topic.percentage >= 70 ? 'good' : 'poor'}>{topic.percentage}%</span>)
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </>
             )}
           </div>
         )}

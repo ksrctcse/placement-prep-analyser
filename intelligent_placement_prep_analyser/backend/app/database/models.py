@@ -183,3 +183,83 @@ class InterviewAttempt(Base):
     
     interview = relationship("Interview", foreign_keys=[interview_id])
     student = relationship("StudentProfile", foreign_keys=[student_id])
+
+
+class TestAttemptDetail(Base):
+    """Stores answer details for each question in a test attempt"""
+    __tablename__ = "test_attempt_details"
+    id = Column(Integer, primary_key=True)
+    test_attempt_id = Column(Integer, ForeignKey("test_attempts.id"), nullable=False, index=True)
+    question_id = Column(Integer, ForeignKey("test_questions.id"), nullable=False, index=True)
+    topic_id = Column(Integer, ForeignKey("topics.id"), nullable=False, index=True)
+    student_answer = Column(String)  # A, B, C, D or None
+    correct_answer = Column(String)  # A, B, C, D
+    is_correct = Column(Boolean, default=False)
+    time_spent = Column(Integer, default=0)  # in seconds
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    test_attempt = relationship("TestAttempt", foreign_keys=[test_attempt_id])
+    question = relationship("TestQuestion", foreign_keys=[question_id])
+    topic = relationship("Topic", foreign_keys=[topic_id])
+
+
+class TestAnalysis(Base):
+    """Stores analysis results for a test attempt"""
+    __tablename__ = "test_analyses"
+    id = Column(Integer, primary_key=True)
+    test_attempt_id = Column(Integer, ForeignKey("test_attempts.id"), nullable=False, unique=True, index=True)
+    student_id = Column(Integer, ForeignKey("student_profiles.id"), nullable=False, index=True)
+    test_id = Column(Integer, ForeignKey("tests.id"), nullable=False, index=True)
+    
+    # Overall metrics
+    total_questions = Column(Integer)
+    correct_answers = Column(Integer)
+    incorrect_answers = Column(Integer)
+    unanswered = Column(Integer, default=0)
+    overall_percentage = Column(Integer)  # 0-100
+    pass_status = Column(Boolean, default=False)  # True if >= 70%
+    
+    # Analysis content
+    strengths = Column(Text)  # JSON: list of topics/concepts done well
+    weaknesses = Column(Text)  # JSON: list of topics/concepts that need improvement
+    recommendations = Column(Text)  # JSON: suggestions for improvement
+    topic_wise_analysis = Column(Text)  # JSON: performance breakdown by topic
+    
+    # Metadata
+    analysis_generated_by = Column(String, default="ai_agent")  # ai_agent, manual, etc.
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    test_attempt = relationship("TestAttempt", foreign_keys=[test_attempt_id])
+    student = relationship("StudentProfile", foreign_keys=[student_id])
+    test = relationship("Test", foreign_keys=[test_id])
+
+
+class TopicPerformance(Base):
+    """Tracks performance per topic for a student"""
+    __tablename__ = "topic_performance"
+    id = Column(Integer, primary_key=True)
+    student_id = Column(Integer, ForeignKey("student_profiles.id"), nullable=False, index=True)
+    topic_id = Column(Integer, ForeignKey("topics.id"), nullable=False, index=True)
+    department_id = Column(Integer, ForeignKey("departments.id"), nullable=False, index=True)
+    section = Column(String(1), nullable=False)
+    
+    # Performance metrics
+    total_attempts = Column(Integer, default=0)
+    total_questions = Column(Integer, default=0)
+    correct_answers = Column(Integer, default=0)
+    average_percentage = Column(Integer, default=0)  # 0-100
+    last_attempt_percentage = Column(Integer, default=0)
+    
+    # Proficiency level
+    proficiency_level = Column(String(20), default="beginner")  # beginner, intermediate, advanced, expert
+    mastery_status = Column(Boolean, default=False)  # True if consistently >= 80%
+    
+    # Tracking
+    last_attempted_at = Column(DateTime)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    student = relationship("StudentProfile", foreign_keys=[student_id])
+    topic = relationship("Topic", foreign_keys=[topic_id])
+    department = relationship("DepartmentModel", foreign_keys=[department_id])

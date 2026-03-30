@@ -4,7 +4,13 @@ from app.config.settings import settings
 import json
 
 genai.configure(api_key=settings.GOOGLE_API_KEY)
-model = genai.GenerativeModel("gemini-1.5-pro")
+# Use gemini-2.5-flash (newest, fastest, and available in your API tier)
+# Available options in your account: gemini-2.5-flash, gemini-2.0-flash, gemini-2.5-pro
+try:
+    model = genai.GenerativeModel("gemini-2.5-flash")
+except:
+    # Fallback to gemini-2.0-flash if 2.5 not available
+    model = genai.GenerativeModel("gemini-2.0-flash")
 
 def ask_gemini(prompt):
     response=model.generate_content(prompt)
