@@ -4,9 +4,10 @@ Staff Dashboard Routes
 from fastapi import APIRouter, HTTPException, status, UploadFile, File, Header, Form
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
+from sqlalchemy import or_, case, func, String
 from pydantic import BaseModel
 from app.database.db import SessionLocal
-from app.database.models import StaffProfile, Topic, Test, TestAttempt, User, UserRole
+from app.database.models import StaffProfile, Topic, Test, TestAttempt, User, UserRole, StudentProfile, DepartmentModel
 from app.services.pdf_service import process_pdf_for_rag
 from app.services.vector_service import add_text_chunks, search_topic, delete_topic_store
 from datetime import datetime
@@ -712,6 +713,206 @@ async def get_performance_metrics(authorization: Optional[str] = Header(None)):
         ]
         
         return metrics
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
+
+
+@router.get("/test-attempts/filtered")
+async def get_filtered_test_attempts(
+    authorization: Optional[str] = Header(None),
+    department_id: Optional[int] = None,
+    sections: Optional[str] = None,  # comma-separated section values
+    roll_numbers: Optional[str] = None  # comma-separated roll numbers
+):
+    """
+    Get filtered test attempts made by students for staff's tests
+    Supports filtering by department, section, and roll number
+    """
+    db = SessionLocal()
+    try:
+        if not authorization:
+            raise HTTPException(status_code=401, detail="No authorization token")
+        
+        user_info = get_current_user(authorization)
+        staff_user_id = user_info["user_id"]
+        
+        staff = db.query(StaffProfile).filter(
+            StaffProfile.user_id == staff_user_id
+        ).first()
+        
+        if not staff:
+            raise HTTPException(status_code=404, detail="Staff profile not found")
+        
+        # Parse filters
+        section_list = [s.strip() for s in sections.split(',')] if sections else []
+        roll_number_list = [r.strip() for r in roll_numbers.split(',')] if roll_numbers else []
+        
+        # Build query
+        query = db.query(
+            TestAttempt,
+            StudentProfile.roll_number,
+            StudentProfile.name,
+            StudentProfile.department_id,
+            StudentProfile.section,
+            Test.title.label('test_title'),
+            Topic.title.label('topic_title')
+        ).join(
+            StudentProfile, TestAttempt.student_id == StudentProfile.id
+        ).join(
+            Test, TestAttempt.test_id == Test.id
+        ).outerjoin(
+            Topic, Test.topic_id == Topic.id
+        ).filter(
+            Test.staff_id == staff.id  # Only this staff's tests
+        )
+        
+        # Apply filters
+        if department_id:
+            query = query.filter(StudentProfile.department_id == department_id)
+        
+        if section_list:
+            query = query.filter(StudentProfile.section.in_(section_list))
+        
+        if roll_number_list:
+            # Build filter to handle both actual roll_numbers and generated format {section}-{id:04d}
+            roll_filters = []
+            
+            for roll_num in roll_number_list:
+                # Check if it matches actual roll_number column
+                roll_filters.append(StudentProfile.roll_number == roll_num)
+                
+                # Also check if it matches generated format {section}-{id:04d}
+                # Extract section and id from generated format (e.g., "A-0001")
+                if '-' in roll_num:
+                    parts = roll_num.split('-')
+                    if len(parts) == 2 and parts[0].isalpha() and parts[1].isdigit():
+                        try:
+                            section_part = parts[0]
+                            id_part = int(parts[1])
+                            roll_filters.append(
+                                (StudentProfile.section == section_part) & 
+                                (StudentProfile.id == id_part) &
+                                (StudentProfile.roll_number.is_(None))  # Only if no actual roll_number set
+                            )
+                        except ValueError:
+                            pass
+            
+            if roll_filters:
+                query = query.filter(or_(*roll_filters))
+        
+        # Execute query - order by roll_number ascending, then by date descending
+        results = query.order_by(StudentProfile.roll_number.asc(), TestAttempt.created_at.desc()).all()
+        
+        # Format response
+        test_attempts = []
+        for row in results:
+            attempt = row[0]
+            roll_number = row[1]
+            student_name = row[2]
+            dept_id = row[3]
+            section = row[4]
+            test_title = row[5]
+            topic_title = row[6]
+            
+            # Get department name
+            dept = db.query(DepartmentModel).filter(DepartmentModel.id == dept_id).first()
+            dept_name = dept.name if dept else "Unknown"
+            
+            test_attempts.append({
+                "attempt_id": attempt.id,
+                "roll_number": roll_number if roll_number else "N/A",
+                "name": student_name,
+                "department": dept_name,
+                "section": section,
+                "test_name": test_title,
+                "topic_name": topic_title if topic_title else "General",
+                "score": attempt.score,
+                "status": attempt.status,
+                "date": attempt.created_at.isoformat(),
+                "attempt_count": attempt.attempt_count,
+                "created_at": attempt.created_at
+            })
+        
+        return {
+            "success": True,
+            "total_records": len(test_attempts),
+            "test_attempts": test_attempts
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
+
+
+@router.get("/students/by-filter")
+async def get_students_by_filter(
+    authorization: Optional[str] = Header(None),
+    department_id: Optional[int] = None,
+    sections: Optional[str] = None
+):
+    """
+    Get students matching department and section filters
+    Used to populate roll numbers dropdown
+    """
+    db = SessionLocal()
+    try:
+        if not authorization:
+            raise HTTPException(status_code=401, detail="No authorization token")
+        
+        user_info = get_current_user(authorization)
+        staff_user_id = user_info["user_id"]
+        
+        staff = db.query(StaffProfile).filter(
+            StaffProfile.user_id == staff_user_id
+        ).first()
+        
+        if not staff:
+            raise HTTPException(status_code=404, detail="Staff profile not found")
+        
+        # Parse filters
+        section_list = [s.strip() for s in sections.split(',')] if sections else []
+        
+        # Build query
+        query = db.query(StudentProfile).filter(
+            StudentProfile.department_id == staff.department_id  # Only students in same department
+        )
+        
+        # Apply optional filters
+        if department_id:
+            query = query.filter(StudentProfile.department_id == department_id)
+        
+        if section_list:
+            query = query.filter(StudentProfile.section.in_(section_list))
+        
+        # Get students with roll numbers
+        # Sort by: actual roll_number if exists, otherwise by generated format {section}-{id:04d}
+        students = query.order_by(
+            case(
+                (StudentProfile.roll_number.isnot(None), StudentProfile.roll_number),
+                else_=func.concat(StudentProfile.section, '-', func.lpad(func.cast(StudentProfile.id, String), 4, '0'))
+            )
+        ).all()
+        
+        return {
+            "success": True,
+            "students": [
+                {
+                    "student_id": s.id,
+                    "roll_number": s.roll_number if s.roll_number else f"{s.section}-{s.id:04d}",
+                    "name": s.name,
+                    "section": s.section
+                }
+                for s in students
+            ]
+        }
+    
     except HTTPException:
         raise
     except Exception as e:

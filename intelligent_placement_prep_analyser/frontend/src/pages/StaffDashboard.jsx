@@ -31,6 +31,19 @@ const StaffDashboard = () => {
   const [filterOptionsLoading, setFilterOptionsLoading] = useState(false);
   const [menuLoading, setMenuLoading] = useState(false);
   
+  // Filter state for test attempts
+  const [testAttemptFilters, setTestAttemptFilters] = useState({
+    department: null,
+    sections: [],
+    rollNumbers: []
+  });
+  const [availableRollNumbers, setAvailableRollNumbers] = useState([]);
+  const [availableSectionsForAttempts, setAvailableSectionsForAttempts] = useState(['A', 'B', 'C']);
+  const [filteredTestAttempts, setFilteredTestAttempts] = useState([]);
+  const [testAttemptsLoading, setTestAttemptsLoading] = useState(false);
+  const [showTestResultsPopup, setShowTestResultsPopup] = useState(false);
+  const [selectedAttemptDetails, setSelectedAttemptDetails] = useState(null);
+  
   const fileInputRef = React.useRef(null);
   const navigate = useNavigate();
 
@@ -45,6 +58,9 @@ const StaffDashboard = () => {
       navigate('/auth');
       return;
     }
+    
+    // Always fetch departments for test attempts filters
+    fetchDepartments();
     
     if (activeMenu === 'dashboard') {
       fetchDashboardData();
@@ -163,6 +179,98 @@ const StaffDashboard = () => {
     } finally {
       setReindexLoading(null);
     }
+  };
+
+  // Fetch available roll numbers based on department and section filters
+  const fetchAvailableRollNumbers = async (deptId, sectionsArray) => {
+    try {
+      setTestAttemptsLoading(true);
+      const params = new URLSearchParams();
+      if (deptId) params.append('department_id', deptId);
+      if (sectionsArray && sectionsArray.length > 0) {
+        params.append('sections', sectionsArray.join(','));
+      }
+      
+      const url = `${API_BASE}/staff/students/by-filter${params.toString() ? '?' + params.toString() : ''}`;
+      const response = await axios.get(url, {
+        headers: { 'Authorization': authHeader }
+      });
+      
+      if (response.data.success && response.data.students) {
+        // Sort by roll number in ascending order
+        const sortedStudents = response.data.students.sort((a, b) => {
+          return String(a.roll_number).localeCompare(String(b.roll_number), undefined, { numeric: true });
+        });
+        
+        const rollNumbers = sortedStudents.map(student => ({
+          label: `${student.roll_number} - ${student.name}`,
+          value: student.roll_number || `${student.section}-${String(student.student_id).padStart(4, '0')}`,
+          name: student.name
+        }));
+        setAvailableRollNumbers(rollNumbers);
+      }
+    } catch (error) {
+      console.error('Error fetching roll numbers:', error);
+      setMessage({ type: 'error', text: 'Failed to load roll numbers' });
+    } finally {
+      setTestAttemptsLoading(false);
+    }
+  };
+
+  // Fetch filtered test attempts
+  const fetchFilteredTestAttempts = async () => {
+    try {
+      setTestAttemptsLoading(true);
+      const params = new URLSearchParams();
+      
+      if (testAttemptFilters.department) {
+        params.append('department_id', testAttemptFilters.department);
+      }
+      if (testAttemptFilters.sections && testAttemptFilters.sections.length > 0) {
+        params.append('sections', testAttemptFilters.sections.join(','));
+      }
+      if (testAttemptFilters.rollNumbers && testAttemptFilters.rollNumbers.length > 0) {
+        params.append('roll_numbers', testAttemptFilters.rollNumbers.join(','));
+      }
+      
+      const url = `${API_BASE}/staff/test-attempts/filtered${params.toString() ? '?' + params.toString() : ''}`;
+      const response = await axios.get(url, {
+        headers: { 'Authorization': authHeader }
+      });
+      
+      if (response.data.success && response.data.test_attempts) {
+        setFilteredTestAttempts(response.data.test_attempts);
+        setMessage({ type: 'success', text: `Found ${response.data.total_records} test attempts` });
+      }
+    } catch (error) {
+      console.error('Error fetching test attempts:', error);
+      const errorMsg = error.response?.data?.detail || 'Failed to load test attempts';
+      setMessage({ type: 'error', text: errorMsg });
+    } finally {
+      setTestAttemptsLoading(false);
+    }
+  };
+
+  // Handle test attempt filter changes
+  const handleTestAttemptFilterChange = (filterName, value) => {
+    const newFilters = { ...testAttemptFilters, [filterName]: value };
+    setTestAttemptFilters(newFilters);
+    
+    // Auto-fetch roll numbers when department or sections change
+    if (filterName === 'department' || filterName === 'sections') {
+      fetchAvailableRollNumbers(newFilters.department, newFilters.sections);
+    }
+  };
+
+  // Reset test attempt filters
+  const resetTestAttemptFilters = () => {
+    setTestAttemptFilters({
+      department: null,
+      sections: [],
+      rollNumbers: []
+    });
+    setAvailableRollNumbers([]);
+    setFilteredTestAttempts([]);
   };
 
   const fetchPerformanceMetrics = async () => {
@@ -412,27 +520,179 @@ const StaffDashboard = () => {
 
             <div className="recent-section">
               <h2>Recent Test Attempts</h2>
-              {dashboardData.recent_tests && dashboardData.recent_tests.length > 0 ? (
-                <table className="recent-table">
-                  <thead>
-                    <tr>
-                      <th>Test Title</th>
-                      <th>Score</th>
-                      <th>Date</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {dashboardData.recent_tests.map((test) => (
-                      <tr key={test.id}>
-                        <td>{test.test_title}</td>
-                        <td>{test.score ? `${test.score}%` : 'N/A'}</td>
-                        <td>{new Date(test.created_at).toLocaleDateString()}</td>
-                      </tr>
+              
+              {/* Test Attempts Filters */}
+              <div className="test-attempts-filters">
+                <div className="filter-group">
+                  <label htmlFor="attempts-filter-department">Department:</label>
+                  <select
+                    id="attempts-filter-department"
+                    value={testAttemptFilters.department || ''}
+                    onChange={(e) => handleTestAttemptFilterChange('department', e.target.value ? parseInt(e.target.value) : null)}
+                    disabled={testAttemptsLoading}
+                    className="filter-select"
+                  >
+                    <option value="">Select Department</option>
+                    {departments.map((dept) => (
+                      <option key={dept.id} value={dept.id}>
+                        {dept.name}
+                      </option>
                     ))}
-                  </tbody>
-                </table>
+                  </select>
+                </div>
+                
+                <div className="filter-group">
+                  <label>Sections:</label>
+                  <div className="checkbox-group">
+                    <label className="checkbox-label">
+                      <input
+                        type="checkbox"
+                        checked={testAttemptFilters.sections.length === availableSectionsForAttempts.length}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            handleTestAttemptFilterChange('sections', [...availableSectionsForAttempts]);
+                          } else {
+                            handleTestAttemptFilterChange('sections', []);
+                          }
+                        }}
+                        disabled={testAttemptsLoading}
+                      />
+                      <span>Select All</span>
+                    </label>
+                    {availableSectionsForAttempts.map((section) => (
+                      <label key={section} className="checkbox-label">
+                        <input
+                          type="checkbox"
+                          checked={testAttemptFilters.sections.includes(section)}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              handleTestAttemptFilterChange('sections', [...testAttemptFilters.sections, section]);
+                            } else {
+                              handleTestAttemptFilterChange('sections', testAttemptFilters.sections.filter(s => s !== section));
+                            }
+                          }}
+                          disabled={testAttemptsLoading}
+                        />
+                        <span>{section}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+                
+                <div className="filter-group">
+                  <label>Roll Numbers:</label>
+                  <div className="checkbox-group">
+                    <label className="checkbox-label">
+                      <input
+                        type="checkbox"
+                        checked={testAttemptFilters.rollNumbers.length === availableRollNumbers.length && availableRollNumbers.length > 0}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            handleTestAttemptFilterChange('rollNumbers', availableRollNumbers.map(r => r.value));
+                          } else {
+                            handleTestAttemptFilterChange('rollNumbers', []);
+                          }
+                        }}
+                        disabled={testAttemptsLoading || availableRollNumbers.length === 0}
+                      />
+                      <span>Select All</span>
+                    </label>
+                    <div className="checkbox-scroll">
+                      {availableRollNumbers.map((rollNum) => (
+                        <label key={rollNum.value} className="checkbox-label">
+                          <input
+                            type="checkbox"
+                            checked={testAttemptFilters.rollNumbers.includes(rollNum.value)}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                handleTestAttemptFilterChange('rollNumbers', [...testAttemptFilters.rollNumbers, rollNum.value]);
+                              } else {
+                                handleTestAttemptFilterChange('rollNumbers', testAttemptFilters.rollNumbers.filter(r => r !== rollNum.value));
+                              }
+                            }}
+                            disabled={testAttemptsLoading}
+                          />
+                          <span className="checkbox-text">{rollNum.label}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+                
+                <div className="filter-actions">
+                  <button
+                    className="btn btn-primary"
+                    onClick={fetchFilteredTestAttempts}
+                    disabled={testAttemptsLoading}
+                  >
+                    {testAttemptsLoading ? 'Loading...' : 'Apply Filters'}
+                  </button>
+                  <button
+                    className="btn btn-secondary"
+                    onClick={resetTestAttemptFilters}
+                    disabled={testAttemptsLoading}
+                  >
+                    Reset
+                  </button>
+                </div>
+              </div>
+              
+              {/* Test Attempts Table */}
+              {filteredTestAttempts && filteredTestAttempts.length > 0 ? (
+                <div className="test-attempts-table-wrapper">
+                  <table className="test-attempts-table">
+                    <thead>
+                      <tr>
+                        <th>Roll No</th>
+                        <th>Name</th>
+                        <th>Department</th>
+                        <th>Section</th>
+                        <th>Test Name</th>
+                        <th>Topic Name</th>
+                        <th>Score</th>
+                        <th>Status</th>
+                        <th>Date</th>
+                        <th>Attempts</th>
+                        <th>Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredTestAttempts.map((attempt) => (
+                        <tr key={attempt.attempt_id}>
+                          <td>{attempt.roll_number}</td>
+                          <td>{attempt.name}</td>
+                          <td>{attempt.department}</td>
+                          <td>{attempt.section}</td>
+                          <td>{attempt.test_name}</td>
+                          <td>{attempt.topic_name}</td>
+                          <td>{attempt.score !== null ? `${attempt.score}%` : 'N/A'}</td>
+                          <td>
+                            <span className={`status-badge status-${attempt.status?.toLowerCase()}`}>
+                              {attempt.status}
+                            </span>
+                          </td>
+                          <td>{new Date(attempt.date).toLocaleDateString()}</td>
+                          <td>{attempt.attempt_count}</td>
+                          <td>
+                            <button
+                              className="btn-action"
+                              onClick={() => {
+                                setSelectedAttemptDetails(attempt);
+                                setShowTestResultsPopup(true);
+                              }}
+                            >
+                              View Details
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : filteredTestAttempts.length === 0 && (testAttemptFilters.department || testAttemptFilters.sections.length > 0) ? (
+                <p className="no-data">No test attempts found for the selected filters</p>
               ) : (
-                <p className="no-data">No test attempts yet</p>
+                <p className="no-data">Select filters and click "Apply Filters" to view test attempts</p>
               )}
             </div>
           </div>
@@ -722,6 +982,83 @@ const StaffDashboard = () => {
                   onClick={() => deleteTopic(deleteConfirm.topicId)}
                 >
                   Delete Topic
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Test Results Details Modal */}
+        {showTestResultsPopup && selectedAttemptDetails && (
+          <div className="modal-overlay" onClick={() => setShowTestResultsPopup(false)}>
+            <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+              <div className="modal-header">
+                <h3>Test Attempt Details</h3>
+                <button
+                  className="modal-close"
+                  onClick={() => setShowTestResultsPopup(false)}
+                >
+                  ×
+                </button>
+              </div>
+              
+              <div className="modal-body">
+                <div className="attempt-details-grid">
+                  <div className="detail-item">
+                    <span className="detail-label">Roll No:</span>
+                    <span className="detail-value">{selectedAttemptDetails.roll_number}</span>
+                  </div>
+                  <div className="detail-item">
+                    <span className="detail-label">Student Name:</span>
+                    <span className="detail-value">{selectedAttemptDetails.name}</span>
+                  </div>
+                  <div className="detail-item">
+                    <span className="detail-label">Test Name:</span>
+                    <span className="detail-value">{selectedAttemptDetails.test_name}</span>
+                  </div>
+                  <div className="detail-item">
+                    <span className="detail-label">Topic Name:</span>
+                    <span className="detail-value">{selectedAttemptDetails.topic_name}</span>
+                  </div>
+                  <div className="detail-item">
+                    <span className="detail-label">Department:</span>
+                    <span className="detail-value">{selectedAttemptDetails.department}</span>
+                  </div>
+                  <div className="detail-item">
+                    <span className="detail-label">Section:</span>
+                    <span className="detail-value">{selectedAttemptDetails.section}</span>
+                  </div>
+                  <div className="detail-item">
+                    <span className="detail-label">Score:</span>
+                    <span className="detail-value">
+                      {selectedAttemptDetails.score !== null ? `${selectedAttemptDetails.score}%` : 'N/A'}
+                    </span>
+                  </div>
+                  <div className="detail-item">
+                    <span className="detail-label">Status:</span>
+                    <span className={`detail-value status-badge status-${selectedAttemptDetails.status?.toLowerCase()}`}>
+                      {selectedAttemptDetails.status}
+                    </span>
+                  </div>
+                  <div className="detail-item">
+                    <span className="detail-label">Date Attempted:</span>
+                    <span className="detail-value">
+                      {new Date(selectedAttemptDetails.date).toLocaleString()}
+                    </span>
+                  </div>
+                  <div className="detail-item">
+                    <span className="detail-label">Number of Attempts:</span>
+                    <span className="detail-value">{selectedAttemptDetails.attempt_count}</span>
+                  </div>
+                </div>
+              </div>
+              
+              <div className="modal-footer">
+                <button
+                  className="btn btn-primary"
+                  onClick={() => setShowTestResultsPopup(false)}
+                >
+                  Close
                 </button>
               </div>
             </div>
