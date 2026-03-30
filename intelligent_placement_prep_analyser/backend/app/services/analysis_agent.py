@@ -321,7 +321,14 @@ def _update_topic_performance(
                 student_id=student_id,
                 topic_id=topic_id,
                 department_id=student.department_id,
-                section=student.section
+                section=student.section,
+                total_attempts=0,
+                total_questions=0,
+                correct_answers=0,
+                average_percentage=0,
+                last_attempt_percentage=0,
+                proficiency_level="beginner",
+                mastery_status=False
             )
             db.add(topic_perf)
         
@@ -329,6 +336,14 @@ def _update_topic_performance(
         total_q = perf_data.get("total_questions", 0)
         correct_q = perf_data.get("correct_answers", 0)
         percentage = perf_data.get("percentage", 0)
+        
+        # Ensure fields are initialized (in case they're None)
+        if topic_perf.total_attempts is None:
+            topic_perf.total_attempts = 0
+        if topic_perf.total_questions is None:
+            topic_perf.total_questions = 0
+        if topic_perf.correct_answers is None:
+            topic_perf.correct_answers = 0
         
         topic_perf.total_attempts += 1
         topic_perf.total_questions += total_q

@@ -2,10 +2,10 @@
 Student Dashboard Routes
 """
 from fastapi import APIRouter, HTTPException, status, UploadFile, File, Header
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from pydantic import BaseModel
 from app.database.db import SessionLocal
-from app.database.models import StudentProfile, TestAttempt, InterviewAttempt, User, Resume, Topic, Test, Interview, TestQuestion, test_topics_association
+from app.database.models import StudentProfile, TestAttempt, InterviewAttempt, User, Resume, Topic, Test, Interview, TestQuestion, TestAttemptDetail, test_topics_association
 from app.services.vector_service import search_topic
 from typing import Optional, List
 from jose import JWTError, jwt
@@ -98,10 +98,45 @@ async def get_student_dashboard(authorization: Optional[str] = Header(None)):
         
         # Get recent test attempts (limit 5)
         recent_tests = db.query(TestAttempt).options(
-            joinedload(TestAttempt.test)
+            joinedload(TestAttempt.test).joinedload(Test.topics)
         ).filter(
             TestAttempt.student_id == student.id
         ).order_by(TestAttempt.created_at.desc()).limit(5).all()
+        
+        # Build enhanced recent test attempts data
+        recent_test_attempts_data = []
+        for t in recent_tests:
+            # Get test questions count
+            total_questions = len(t.test.questions)
+            
+            # Get correct answers count from test attempt details
+            correct_answers = db.query(TestAttemptDetail).filter(
+                TestAttemptDetail.test_attempt_id == t.id,
+                TestAttemptDetail.is_correct == True
+            ).count()
+            
+            # Get topics for this test
+            topics = [topic.title for topic in t.test.topics]
+            
+            # Calculate percentage
+            percentage = int((correct_answers / total_questions) * 100) if total_questions > 0 else 0
+            
+            # Determine pass/fail status
+            pass_status = "pass" if percentage >= 70 else "fail"
+            
+            recent_test_attempts_data.append({
+                "id": t.id,
+                "test_id": t.test_id,
+                "test_title": t.test.title,
+                "score": t.score,
+                "percentage": percentage,
+                "status": t.status,
+                "pass_status": pass_status,
+                "correct_answers": correct_answers,
+                "total_questions": total_questions,
+                "topics": topics,
+                "created_at": t.created_at.isoformat()
+            })
         
         # Get recent interview attempts (limit 5)
         recent_interviews = db.query(InterviewAttempt).options(
@@ -121,16 +156,7 @@ async def get_student_dashboard(authorization: Optional[str] = Header(None)):
                 "avg_interview_score": round(float(interview_metrics.avg_score) if interview_metrics.avg_score else 0, 2),
                 "resume_uploaded": resume_exists
             },
-            "recent_test_attempts": [
-                {
-                    "id": t.id,
-                    "test_title": t.test.title,
-                    "score": t.score,
-                    "status": t.status,
-                    "created_at": t.created_at.isoformat()
-                }
-                for t in recent_tests
-            ],
+            "recent_test_attempts": recent_test_attempts_data,
             "recent_interview_attempts": [
                 {
                     "id": i.id,
@@ -221,6 +247,8 @@ async def get_tests(
 ):
     """
     Get all available tests from topics (with pagination)
+    Returns staff name from topic if test staff_name is unknown
+    Includes attempt status and scores
     """
     db = SessionLocal()
     try:
@@ -240,32 +268,188 @@ async def get_tests(
         # Get paginated tests with eager loading
         from sqlalchemy.orm import joinedload
         tests = db.query(Test).options(
-            joinedload(Test.topic),
-            joinedload(Test.staff)
+            joinedload(Test.topic).joinedload(Topic.staff),
+            joinedload(Test.staff),
+            joinedload(Test.topics),
+            joinedload(Test.questions)
         ).order_by(
             Test.created_at.desc()
         ).offset(skip).limit(limit).all()
         
-        # Get student's test attempts (single query)
-        student_test_ids = {t.test_id for t in db.query(TestAttempt.test_id).filter(
+        # Get student's test attempts with details (single query)
+        student_attempts = db.query(TestAttempt).options(
+            joinedload(TestAttempt.test)
+        ).filter(
             TestAttempt.student_id == student.id
-        ).all()}
+        ).all()
         
-        return [
-            {
+        student_test_ids = {ta.test_id for ta in student_attempts}
+        attempt_details = {ta.test_id: {
+            "id": ta.id,
+            "score": ta.score, 
+            "status": ta.status,
+            "attempt_count": ta.attempt_count,
+            "created_at": ta.created_at.isoformat()
+        } for ta in student_attempts}
+        
+        result = []
+        for t in tests:
+            # Get staff name: prefer test.staff, fallback to primary topic staff
+            staff_name = "Unknown"
+            if t.staff and t.staff.name:
+                staff_name = t.staff.name
+            elif t.topic and t.topic.staff and t.topic.staff.name:
+                staff_name = t.topic.staff.name
+            
+            # Get topics list
+            topics_list = [topic.title for topic in t.topics] if t.topics else []
+            if t.topic and t.topic.title and t.topic.title not in topics_list:
+                topics_list.insert(0, t.topic.title)
+            
+            attempt_info = attempt_details.get(t.id, {})
+            
+            test_data = {
                 "id": t.id,
                 "title": t.title,
                 "description": t.description,
                 "topic_title": t.topic.title if t.topic else "General",
-                "staff_name": t.staff.name if t.staff else "Unknown",
+                "topics": topics_list,
+                "staff_name": staff_name,
+                "total_questions": len(t.questions) if t.questions else 0,
                 "attempted": t.id in student_test_ids,
+                "attempt_id": attempt_info.get("id"),
+                "attempt_score": attempt_info.get("score"),
+                "attempt_status": attempt_info.get("status"),
+                "attempt_count": attempt_info.get("attempt_count", 0),
+                "attempted_at": attempt_info.get("created_at"),
                 "created_at": t.created_at.isoformat()
             }
-            for t in tests
-        ]
+            
+            # Add pass/fail status if attempted
+            if t.id in student_test_ids and attempt_info.get("score") is not None:
+                test_data["pass_status"] = "pass" if attempt_info.get("score") >= 70 else "fail"
+            
+            result.append(test_data)
+        
+        return result
     except HTTPException:
         raise
     except Exception as e:
+        print(f"Error fetching tests: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
+
+
+@router.get("/topics/{topic_id}/tests")
+async def get_topic_tests(
+    topic_id: int,
+    authorization: Optional[str] = Header(None)
+):
+    """
+    Get all tests created from a specific topic, with attempt status and details
+    Returns detailed information about each test and attempt
+    """
+    db = SessionLocal()
+    try:
+        if not authorization:
+            raise HTTPException(status_code=401, detail="No authorization token")
+        
+        user_info = get_current_user(authorization)
+        student_user_id = user_info["user_id"]
+        
+        student = db.query(StudentProfile).filter(
+            StudentProfile.user_id == student_user_id
+        ).first()
+        
+        if not student:
+            raise HTTPException(status_code=404, detail="Student profile not found")
+        
+        # Verify topic exists
+        topic = db.query(Topic).options(
+            joinedload(Topic.staff)
+        ).filter(Topic.id == topic_id).first()
+        
+        if not topic:
+            raise HTTPException(status_code=404, detail="Topic not found")
+        
+        # Get tests created from this topic (check via test.topics relationship)
+        tests = db.query(Test).options(
+            joinedload(Test.questions)
+        ).filter(
+            Test.topics.any(Topic.id == topic_id)
+        ).order_by(Test.created_at.desc()).all()
+        
+        # If no tests found via topics relationship, try single topic
+        if not tests:
+            tests = db.query(Test).options(
+                joinedload(Test.questions)
+            ).filter(Test.topic_id == topic_id).order_by(Test.created_at.desc()).all()
+        
+        # Get student's test attempts with details
+        student_attempts = db.query(TestAttempt).options(
+            joinedload(TestAttempt.test)
+        ).filter(
+            TestAttempt.student_id == student.id,
+            TestAttempt.test_id.in_([t.id for t in tests])
+        ).all() if tests else []
+        
+        attempt_map = {ta.test_id: ta for ta in student_attempts}
+        
+        result = []
+        for t in tests:
+            attempt = attempt_map.get(t.id)
+            
+            test_data = {
+                "id": t.id,
+                "title": t.title,
+                "description": t.description,
+                "total_questions": len(t.questions),
+                "attempted": attempt is not None,
+                "attempt_id": attempt.id if attempt else None,
+                "attempt_score": attempt.score if attempt else None,
+                "attempt_status": attempt.status if attempt else None,
+                "attempt_count": attempt.attempt_count if attempt else 0,
+                "attempted_at": attempt.created_at.isoformat() if attempt else None,
+                "created_at": t.created_at.isoformat()
+            }
+            
+            # Add calculated fields
+            if attempt:
+                # Get answer statistics
+                correct_count = db.query(TestAttemptDetail).filter(
+                    TestAttemptDetail.test_attempt_id == attempt.id,
+                    TestAttemptDetail.is_correct == True
+                ).count()
+                test_data["correct_answers"] = correct_count
+                test_data["incorrect_answers"] = len(t.questions) - correct_count
+                test_data["pass_status"] = "pass" if attempt.score >= 70 else "fail"
+            
+            result.append(test_data)
+        
+        return {
+            "topic_id": topic_id,
+            "topic_title": topic.title,
+            "staff_name": topic.staff.name if topic.staff else "Unknown",
+            "tests": result,
+            "total_tests": len(result),
+            "attempted_tests": len([t for t in result if t["attempted"]]),
+            "pending_tests": len([t for t in result if not t["attempted"]]),
+            "summary": {
+                "total_created": len(result),
+                "total_attempted": len([t for t in result if t["attempted"]]),
+                "total_pending": len([t for t in result if not t["attempted"]]),
+                "average_score": round(sum([t["attempt_score"] for t in result if t["attempt_score"]]) / len([t for t in result if t["attempt_score"]]), 2) if [t for t in result if t["attempt_score"]] else 0
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error fetching topic tests: {e}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         db.close()
@@ -559,6 +743,86 @@ async def download_topic_pdf(
     except HTTPException:
         raise
     except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
+
+
+@router.get("/test-attempt/{attempt_id}/details")
+async def get_test_attempt_details(
+    attempt_id: int,
+    authorization: Optional[str] = Header(None)
+):
+    """
+    Get detailed results for a test attempt
+    Returns: total_questions, correct_count, wrong_count, score, status (pass/fail)
+    """
+    db = SessionLocal()
+    try:
+        if not authorization:
+            raise HTTPException(status_code=401, detail="No authorization token")
+        
+        user_info = get_current_user(authorization)
+        student_user_id = user_info["user_id"]
+        
+        student = db.query(StudentProfile).filter(
+            StudentProfile.user_id == student_user_id
+        ).first()
+        
+        if not student:
+            raise HTTPException(status_code=404, detail="Student profile not found")
+        
+        # Get the test attempt
+        attempt = db.query(TestAttempt).filter(
+            TestAttempt.id == attempt_id,
+            TestAttempt.student_id == student.id
+        ).first()
+        
+        if not attempt:
+            raise HTTPException(status_code=404, detail="Test attempt not found")
+        
+        # Get the test
+        test = db.query(Test).filter(Test.id == attempt.test_id).first()
+        
+        if not test:
+            raise HTTPException(status_code=404, detail="Test not found")
+        
+        # Count total questions
+        total_questions = db.query(TestQuestion).filter(
+            TestQuestion.test_id == test.id
+        ).count()
+        
+        # Count correct answers
+        correct_count = db.query(TestAttemptDetail).filter(
+            TestAttemptDetail.test_attempt_id == attempt.id,
+            TestAttemptDetail.is_correct == True
+        ).count()
+        
+        # Calculate wrong answers
+        wrong_count = total_questions - correct_count
+        
+        # Determine pass/fail (assuming 70% is passing)
+        score = attempt.score or 0
+        status = "pass" if score >= 70 else "fail"
+        
+        return {
+            "attempt_id": attempt.id,
+            "test_id": test.id,
+            "test_title": test.title,
+            "total_questions": total_questions,
+            "correct_count": correct_count,
+            "wrong_count": wrong_count,
+            "score": score,
+            "status": status,
+            "attempted_at": attempt.created_at.isoformat()
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error fetching test attempt details: {e}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         db.close()

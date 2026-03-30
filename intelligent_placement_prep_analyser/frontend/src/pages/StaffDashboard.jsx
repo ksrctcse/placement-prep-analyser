@@ -29,6 +29,7 @@ const StaffDashboard = () => {
   const [availableDepartments, setAvailableDepartments] = useState([]);
   const [availableSections, setAvailableSections] = useState([]);
   const [filterOptionsLoading, setFilterOptionsLoading] = useState(false);
+  const [menuLoading, setMenuLoading] = useState(false);
   
   const fileInputRef = React.useRef(null);
   const navigate = useNavigate();
@@ -57,6 +58,7 @@ const StaffDashboard = () => {
   }, [activeMenu]);
 
   const fetchDashboardData = async () => {
+    setMenuLoading(true);
     try {
       const response = await axios.get(`${API_BASE}/staff/dashboard`, {
         headers: { 'Authorization': authHeader }
@@ -67,10 +69,13 @@ const StaffDashboard = () => {
     } catch (error) {
       console.error('Error fetching dashboard:', error);
       setMessage({ type: 'error', text: 'Failed to load dashboard' });
+    } finally {
+      setMenuLoading(false);
     }
   };
 
   const fetchTopics = async (deptId = null, sec = null) => {
+    setMenuLoading(true);
     try {
       const params = new URLSearchParams();
       if (deptId !== null) params.append('department_id', deptId);
@@ -84,10 +89,13 @@ const StaffDashboard = () => {
     } catch (error) {
       console.error('Error fetching topics:', error);
       setMessage({ type: 'error', text: 'Failed to load topics' });
+    } finally {
+      setMenuLoading(false);
     }
   };
 
   const fetchFilterOptions = async () => {
+    setMenuLoading(true);
     try {
       setFilterOptionsLoading(true);
       const response = await axios.get(`${API_BASE}/staff/topics/filters/options`, {
@@ -106,6 +114,7 @@ const StaffDashboard = () => {
       }
     } catch (error) {
       console.error('Error fetching filter options:', error);
+      setMenuLoading(false);
     } finally {
       setFilterOptionsLoading(false);
     }
@@ -157,6 +166,7 @@ const StaffDashboard = () => {
   };
 
   const fetchPerformanceMetrics = async () => {
+    setMenuLoading(true);
     try {
       const response = await axios.get(`${API_BASE}/staff/performance-metrics`, {
         headers: { 'Authorization': authHeader }
@@ -165,16 +175,21 @@ const StaffDashboard = () => {
     } catch (error) {
       console.error('Error fetching metrics:', error);
       setMessage({ type: 'error', text: 'Failed to load performance metrics' });
+    } finally {
+      setMenuLoading(false);
     }
   };
 
   const fetchDepartments = async () => {
+    setMenuLoading(true);
     try {
       const response = await axios.get(`${API_BASE}/auth/departments`);
       setDepartments(response.data);
     } catch (error) {
       console.error('Error fetching departments:', error);
       setMessage({ type: 'error', text: 'Failed to load departments' });
+    } finally {
+      setMenuLoading(false);
     }
   };
 
@@ -347,8 +362,16 @@ const StaffDashboard = () => {
           </div>
         )}
 
+        {/* Loading Spinner */}
+        {menuLoading && (
+          <div className="loader-container">
+            <div className="loader"></div>
+            <p>Loading...</p>
+          </div>
+        )}
+
         {/* Dashboard View */}
-        {activeMenu === 'dashboard' && dashboardData && (
+        {!menuLoading && activeMenu === 'dashboard' && dashboardData && (
           <div className="dashboard-view">
             <h1>Welcome, {dashboardData.staff_name}!</h1>
             <p className="subtitle">Department: {dashboardData.department}</p>
@@ -416,7 +439,7 @@ const StaffDashboard = () => {
         )}
 
         {/* Topics View */}
-        {activeMenu === 'topics' && (
+        {!menuLoading && activeMenu === 'topics' && (
           <div className="topics-view">
             <h1>My Topics</h1>
             
@@ -516,7 +539,7 @@ const StaffDashboard = () => {
         )}
 
         {/* Upload Topic View */}
-        {activeMenu === 'upload' && (
+        {!menuLoading && activeMenu === 'upload' && (
           <div className="upload-view">
             <h1>Upload New Topic</h1>
             <form onSubmit={handleUploadTopic} className="upload-form">
@@ -629,7 +652,7 @@ const StaffDashboard = () => {
         )}
 
         {/* Performance Metrics View */}
-        {activeMenu === 'performance' && metrics && (
+        {!menuLoading && activeMenu === 'performance' && metrics && (
           <div className="performance-view">
             <h1>Student Performance Metrics</h1>
             

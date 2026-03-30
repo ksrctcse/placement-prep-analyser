@@ -13,12 +13,14 @@ app = FastAPI(
     openapi_url="/openapi.json"
 )
 
-# Enable CORS for frontend on port 5175
+# Enable CORS for frontend (supports multiple ports)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:5175",
+        "http://localhost:5176",
         "http://127.0.0.1:5175",
+        "http://127.0.0.1:5176",
         "http://localhost:3000",
         "http://127.0.0.1:3000"
     ],

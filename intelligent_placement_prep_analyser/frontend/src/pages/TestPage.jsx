@@ -13,6 +13,9 @@ const TestPage = () => {
   const [error, setError] = useState(null);
   const [submitted, setSubmitted] = useState(false);
   const [score, setScore] = useState(0);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState(null);
+  const [submissionResult, setSubmissionResult] = useState(null);
 
   const API_BASE = 'http://localhost:8003';
   const token = localStorage.getItem('access_token');
@@ -73,10 +76,64 @@ const TestPage = () => {
     return Math.round((correctCount / test.questions.length) * 100);
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
+    // Calculate local score for display
     const testScore = calculateScore();
     setScore(testScore);
-    setSubmitted(true);
+    setSubmitting(true);
+    setSubmitError(null);
+
+    try {
+      // Convert quiz answers (index-based) to question ID-based format for backend
+      // Only include answered questions (not null/undefined)
+      const backendAnswers = {};
+      test.questions.forEach((question, idx) => {
+        const selectedAnswer = answers[idx];
+        // Only include if answer was provided
+        if (selectedAnswer) {
+          backendAnswers[question.id.toString()] = selectedAnswer;
+        }
+      });
+
+      const payload = {
+        test_id: parseInt(testId),
+        answers: backendAnswers,
+        time_taken: 0 // Can be enhanced to track actual time spent
+      };
+
+      console.log('Submitting test data:', payload);
+
+      const response = await axios.post(
+        `${API_BASE}/student/test-builder/submit-test`,
+        payload,
+        { headers: { 'Authorization': authHeader } }
+      );
+
+      console.log('Test submission response:', response.data);
+      setSubmissionResult(response.data);
+      setSubmitted(true);
+    } catch (error) {
+      console.error('Error submitting test:', error);
+      let errorMessage = 'Failed to submit test. Please try again.';
+      
+      if (error.response?.data?.detail) {
+        errorMessage = error.response.data.detail;
+      } else if (error.response?.data) {
+        // Handle validation errors (422)
+        if (Array.isArray(error.response.data)) {
+          errorMessage = error.response.data.map(e => e.msg || e.message).join(', ');
+        } else {
+          errorMessage = JSON.stringify(error.response.data);
+        }
+      } else if (error.message) {
+        errorMessage = error.message;
+      }
+      
+      setSubmitError(errorMessage);
+      setSubmitted(false);
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const handleGoBack = () => {
@@ -115,8 +172,15 @@ const TestPage = () => {
     return (
       <div className="test-page">
         <div className="results-container">
+          {submitError && (
+            <div className="error-banner">
+              <p><strong>⚠️ Error saving submission:</strong> {submitError}</p>
+              <button onClick={() => setSubmitted(false)} className="btn-link">Try again</button>
+            </div>
+          )}
+
           <div className="results-header">
-            <h1>Test Completed!</h1>
+            <h1>✅ Test Completed!</h1>
             <p className="test-title">{test.title}</p>
           </div>
 
@@ -135,6 +199,12 @@ const TestPage = () => {
               )}
             </div>
           </div>
+
+          {submissionResult && (
+            <div className="submission-success-banner">
+              <p>✨ Your test has been successfully recorded and will appear in your test history.</p>
+            </div>
+          )}
 
           <div className="review-section">
             <h3>Review Answers</h3>
@@ -155,7 +225,11 @@ const TestPage = () => {
             ))}
           </div>
 
-          <button className="btn-back" onClick={handleGoBack}>Back to Dashboard</button>
+          <div className="results-actions">
+            <button className="btn-back" onClick={handleGoBack} disabled={submitting}>
+              {submitting ? '⏳ Saving...' : 'Back to Dashboard'}
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -235,8 +309,9 @@ const TestPage = () => {
             <button 
               className="btn-submit" 
               onClick={handleSubmit}
+              disabled={submitting}
             >
-              Submit Test →
+              {submitting ? '⏳ Submitting...' : 'Submit Test →'}
             </button>
           ) : (
             <button 

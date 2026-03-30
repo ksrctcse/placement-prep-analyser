@@ -28,6 +28,22 @@ const StudentDashboard = () => {
   const [isCreatingTest, setIsCreatingTest] = useState(false);
   const [testName, setTestName] = useState('');
   const [loadingResults, setLoadingResults] = useState(false);
+  const [menuLoading, setMenuLoading] = useState(false);
+  const [topicTests, setTopicTests] = useState({});
+  const [expandedTopicId, setExpandedTopicId] = useState(null);
+  const [showDialog, setShowDialog] = useState(false);
+  const [dialogType, setDialogType] = useState(''); // 'already_attempted' or 'pending_tests'
+  const [selectedTopic, setSelectedTopic] = useState(null);
+  const [pendingTestsList, setPendingTestsList] = useState([]);
+  const [attemptedTestsList, setAttemptedTestsList] = useState([]);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [testToDelete, setTestToDelete] = useState(null);
+  const [deleting, setDeleting] = useState(false);
+  const [showResultsDetail, setShowResultsDetail] = useState(false);
+  const [selectedAttemptDetails, setSelectedAttemptDetails] = useState(null);
+  const [loadingAttemptDetails, setLoadingAttemptDetails] = useState(false);
+  const [createdTestInfo, setCreatedTestInfo] = useState(null);
+  const [topicAttemptedInfo, setTopicAttemptedInfo] = useState({});
   const fileInputRef = React.useRef(null);
   const navigate = useNavigate();
 
@@ -57,7 +73,27 @@ const StudentDashboard = () => {
     }
   }, [activeMenu]);
 
+  // Refresh tests and dashboard data when user comes back to the page (e.g., from test submission)
+  useEffect(() => {
+    if (!token) return;
+
+    const handleFocus = () => {
+      if (activeMenu === 'tests') {
+        fetchTests();
+      } else if (activeMenu === 'dashboard') {
+        fetchDashboardData();
+      } else if (activeMenu === 'results') {
+        fetchTestResults();
+        fetchTopicPerformance();
+      }
+    };
+
+    window.addEventListener('focus', handleFocus);
+    return () => window.removeEventListener('focus', handleFocus);
+  }, [activeMenu, token]);
+
   const fetchDashboardData = async () => {
+    setMenuLoading(true);
     try {
       const response = await axios.get(`${API_BASE}/student/dashboard`, {
         headers: { 'Authorization': authHeader }
@@ -69,10 +105,13 @@ const StudentDashboard = () => {
     } catch (error) {
       console.error('Error fetching dashboard:', error);
       setMessage({ type: 'error', text: 'Failed to load dashboard' });
+    } finally {
+      setMenuLoading(false);
     }
   };
 
   const fetchTopics = async () => {
+    setMenuLoading(true);
     try {
       const response = await axios.get(`${API_BASE}/student/topics`, {
         headers: { 'Authorization': authHeader }
@@ -81,10 +120,13 @@ const StudentDashboard = () => {
     } catch (error) {
       console.error('Error fetching topics:', error);
       setMessage({ type: 'error', text: 'Failed to load topics' });
+    } finally {
+      setMenuLoading(false);
     }
   };
 
   const fetchTests = async () => {
+    setMenuLoading(true);
     try {
       const response = await axios.get(`${API_BASE}/student/tests`, {
         headers: { 'Authorization': authHeader }
@@ -93,10 +135,13 @@ const StudentDashboard = () => {
     } catch (error) {
       console.error('Error fetching tests:', error);
       setMessage({ type: 'error', text: 'Failed to load tests' });
+    } finally {
+      setMenuLoading(false);
     }
   };
 
   const fetchInterviews = async () => {
+    setMenuLoading(true);
     try {
       const response = await axios.get(`${API_BASE}/student/interviews`, {
         headers: { 'Authorization': authHeader }
@@ -105,10 +150,13 @@ const StudentDashboard = () => {
     } catch (error) {
       console.error('Error fetching interviews:', error);
       setMessage({ type: 'error', text: 'Failed to load interviews' });
+    } finally {
+      setMenuLoading(false);
     }
   };
 
   const fetchResumeInfo = async () => {
+    setMenuLoading(true);
     try {
       const response = await axios.get(`${API_BASE}/student/resume`, {
         headers: { 'Authorization': authHeader }
@@ -117,10 +165,13 @@ const StudentDashboard = () => {
     } catch (error) {
       console.error('Error fetching resume:', error);
       setMessage({ type: 'error', text: 'Failed to load resume info' });
+    } finally {
+      setMenuLoading(false);
     }
   };
 
   const fetchTestResults = async () => {
+    setMenuLoading(true);
     setLoadingResults(true);
     try {
       const response = await axios.get(`${API_BASE}/student/test-builder/student-test-history`, {
@@ -132,6 +183,7 @@ const StudentDashboard = () => {
       setMessage({ type: 'error', text: 'Failed to load test results' });
     } finally {
       setLoadingResults(false);
+      setMenuLoading(false);
     }
   };
 
@@ -158,6 +210,124 @@ const StudentDashboard = () => {
       console.error('Error fetching test analysis:', error);
       setMessage({ type: 'error', text: 'Failed to load test analysis' });
     }
+  };
+
+  const handleDeleteTest = async () => {
+    if (!testToDelete) {
+      console.error('❌ No test selected for deletion');
+      setMessage({ type: 'error', text: 'No test selected' });
+      return;
+    }
+
+    const testId = testToDelete.id;
+    console.log('🗑️ Starting deletion for test:', testId, testToDelete.title);
+
+    try {
+      setDeleting(true);
+      
+      // Build the DELETE URL
+      const deleteUrl = `${API_BASE}/student/test-builder/tests/${testId}`;
+      console.log('📍 API URL:', deleteUrl);
+      console.log('🔐 Authorization header:', authHeader ? 'Present' : 'Missing');
+
+      // Make the DELETE request
+      const response = await axios.delete(deleteUrl, {
+        headers: {
+          'Authorization': authHeader,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      console.log('✅ Delete response:', response.status, response.data);
+
+      if (response.data && response.data.success) {
+        console.log('🎉 Test deleted successfully');
+        setMessage({ 
+          type: 'success', 
+          text: `Test "${testToDelete.title}" deleted successfully` 
+        });
+        
+        // Close dialog and reset
+        setShowDeleteConfirm(false);
+        setTestToDelete(null);
+        
+        // Refresh the data
+        setTimeout(() => {
+          fetchTests();
+          fetchDashboardData();
+        }, 500);
+      } else {
+        throw new Error('Delete returned success=false');
+      }
+    } catch (error) {
+      console.error('❌ Delete error:', error);
+      
+      let errorMsg = 'Failed to delete test';
+      
+      if (error.response) {
+        console.error('Response status:', error.response.status);
+        console.error('Response data:', error.response.data);
+        errorMsg = error.response.data?.detail || error.response.data?.message || errorMsg;
+      } else if (error.message) {
+        errorMsg = error.message;
+      }
+      
+      setMessage({ type: 'error', text: errorMsg });
+      setShowDeleteConfirm(false);
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const handleDeleteClick = (test) => {
+    console.log('Delete clicked for test:', test);
+    setTestToDelete(test);
+    setShowDeleteConfirm(true);
+  };
+
+  const handleCancelDelete = () => {
+    setShowDeleteConfirm(false);
+    setTestToDelete(null);
+  };
+
+  const handleViewTestResults = async (test) => {
+    console.log('📊 Fetching results for test:', test.id);
+    
+    if (!test.attempt_id) {
+      console.error('No attempt_id found for test');
+      setMessage({ type: 'error', text: 'Test attempt not found' });
+      return;
+    }
+
+    try {
+      setLoadingAttemptDetails(true);
+      
+      const response = await axios.get(
+        `${API_BASE}/student/test-attempt/${test.attempt_id}/details`,
+        { headers: { 'Authorization': authHeader } }
+      );
+      
+      console.log('✅ Results fetched:', response.data);
+      
+      setSelectedAttemptDetails(response.data);
+      setShowResultsDetail(true);
+    } catch (error) {
+      console.error('❌ Error fetching results:', error);
+      let errorMsg = 'Failed to load test results';
+      
+      if (error.response?.data?.detail) {
+        errorMsg = error.response.data.detail;
+      }
+      
+      setMessage({ type: 'error', text: errorMsg });
+    } finally {
+      setLoadingAttemptDetails(false);
+    }
+  };
+
+  const handleCloseResultsDetail = () => {
+    setShowResultsDetail(false);
+    setSelectedAttemptDetails(null);
   };
 
   const validateAndSetFile = (file) => {
@@ -274,6 +444,100 @@ const StudentDashboard = () => {
     navigate('/auth');
   };
 
+  const fetchTopicTests = async (topicId) => {
+    try {
+      const response = await axios.get(
+        `${API_BASE}/student/topics/${topicId}/tests`,
+        { headers: { 'Authorization': authHeader } }
+      );
+      setTopicTests({
+        ...topicTests,
+        [topicId]: response.data
+      });
+      setExpandedTopicId(expandedTopicId === topicId ? null : topicId);
+    } catch (error) {
+      console.error('Error fetching topic tests:', error);
+      setMessage({ type: 'error', text: 'Failed to load tests for this topic' });
+    }
+  };
+
+  const handleAddTest = async (topic) => {
+    try {
+      // Check if tests are already loaded
+      let tests;
+      if (topicTests[topic.id]) {
+        tests = topicTests[topic.id].tests;
+      } else {
+        // Fetch tests if not already loaded
+        const response = await axios.get(
+          `${API_BASE}/student/topics/${topic.id}/tests`,
+          { headers: { 'Authorization': authHeader } }
+        );
+        tests = response.data.tests || [];
+        // Update state with fetched data
+        setTopicTests(prev => ({
+          ...prev,
+          [topic.id]: response.data
+        }));
+      }
+
+      // Now check if there are any tests
+      if (tests && tests.length > 0) {
+        const attemptedTests = tests.filter(t => t.attempted);
+        const pendingTests = tests.filter(t => !t.attempted);
+
+        if (attemptedTests.length > 0 && pendingTests.length === 0) {
+          // All tests attempted - offer to create another test
+          setSelectedTopic(topic);
+          setAttemptedTestsList(attemptedTests);
+          setDialogType('already_attempted');
+          setShowDialog(true);
+        } else if (pendingTests.length > 0) {
+          // Show pending/unattempted tests first
+          setSelectedTopic(topic);
+          setPendingTestsList(pendingTests);
+          setDialogType('pending_tests');
+          setShowDialog(true);
+        }
+      } else {
+        // No tests created yet - proceed to add for test builder
+        addTopicToTest(topic.id);
+      }
+    } catch (error) {
+      console.error('Error handling add test:', error);
+      setMessage({ type: 'error', text: 'Failed to load tests for this topic' });
+      // Fallback: just add to test builder
+      addTopicToTest(topic.id);
+    }
+  };
+
+  const handleDialogConfirm = () => {
+    if (dialogType === 'test_created') {
+      // User confirmed - go to take tests section
+      setShowDialog(false);
+      setActiveMenu('tests');
+      fetchTests();
+    } else if (dialogType === 'already_attempted') {
+      // User confirmed creating new test after all attempts done
+      addTopicToTest(selectedTopic.id);
+      setShowDialog(false);
+    } else if (dialogType === 'pending_tests') {
+      // User confirmed, show as is (they can still add to builder)
+      addTopicToTest(selectedTopic.id);
+      setShowDialog(false);
+    }
+  };
+
+  const handleDialogCancel = () => {
+    setShowDialog(false);
+    setSelectedTopic(null);
+    setPendingTestsList([]);
+    setAttemptedTestsList([]);
+    setCreatedTestInfo(null);
+    setTopicAttemptedInfo({});
+    setDialogType('');
+  };
+
   const addTopicToTest = async (topicId) => {
     try {
       await axios.post(
@@ -342,25 +606,59 @@ const StudentDashboard = () => {
 
     setIsCreatingTest(true);
     try {
+      const url = testName && testName.trim() 
+        ? `${API_BASE}/student/test-builder/create-test?title=${encodeURIComponent(testName.trim())}` 
+        : `${API_BASE}/student/test-builder/create-test`;
+      
       const response = await axios.post(
-        `${API_BASE}/student/test-builder/create-test`,
-        { title: testName || undefined },
+        url,
+        {},
         { headers: { 'Authorization': authHeader } }
       );
 
-      setMessage({ type: 'success', text: 'Test created successfully! Check the Take Tests section.' });
+      // Store created test info
+      setCreatedTestInfo({
+        title: testName || response.data.title,
+        topicIds: selectedTopicIds
+      });
+
+      // Refresh topicTests for all selected topics to check for attempted tests
+      const attemptedInfo = {};
+      for (const topicId of selectedTopicIds) {
+        try {
+          const topicResponse = await axios.get(
+            `${API_BASE}/student/topics/${topicId}/tests`,
+            { headers: { 'Authorization': authHeader } }
+          );
+          setTopicTests(prev => ({
+            ...prev,
+            [topicId]: topicResponse.data
+          }));
+          // Check if there are attempted tests
+          const attemptedTests = topicResponse.data.tests.filter(t => t.attempted);
+          if (attemptedTests.length > 0) {
+            attemptedInfo[topicId] = {
+              topicTitle: topicResponse.data.topic_title,
+              attemptedCount: attemptedTests.length,
+              totalCount: topicResponse.data.tests.length
+            };
+          }
+        } catch (err) {
+          console.error(`Error fetching tests for topic ${topicId}:`, err);
+        }
+      }
+
+      setTopicAttemptedInfo(attemptedInfo);
+      
+      // Show dialog for test created
+      setDialogType('test_created');
+      setShowDialog(true);
       
       // Reset builder
       setSelectedTopicIds([]);
       setGeneratedMCQs([]);
       setTestName('');
       setShowTestBuilder(false);
-      
-      // Refresh tests list
-      setTimeout(() => {
-        setActiveMenu('tests');
-        fetchTests();
-      }, 1500);
     } catch (error) {
       const errorMsg = error.response?.data?.detail || 'Failed to create test';
       setMessage({ type: 'error', text: errorMsg });
@@ -432,8 +730,16 @@ const StudentDashboard = () => {
           </div>
         )}
 
+        {/* Loading Spinner */}
+        {menuLoading && (
+          <div className="loader-container">
+            <div className="loader"></div>
+            <p>Loading...</p>
+          </div>
+        )}
+
         {/* Dashboard View */}
-        {activeMenu === 'dashboard' && dashboardData && (
+        {!menuLoading && activeMenu === 'dashboard' && dashboardData && (
           <div className="dashboard-view">
             <h1>Welcome, {dashboardData.student_name}!</h1>
             <p className="subtitle">Department: {dashboardData.department}</p>
@@ -481,37 +787,102 @@ const StudentDashboard = () => {
             </div>
 
             <div className="recent-section">
-              <h2>Recent Test Attempts</h2>
+              <h2>📚 Recent Test Attempts</h2>
               {dashboardData.recent_test_attempts && dashboardData.recent_test_attempts.length > 0 ? (
-                <table className="recent-table">
-                  <thead>
-                    <tr>
-                      <th>Test Title</th>
-                      <th>Score</th>
-                      <th>Status</th>
-                      <th>Date</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {dashboardData.recent_test_attempts.map((test) => (
-                      <tr key={test.id}>
-                        <td>{test.test_title}</td>
-                        <td>{test.score ? `${test.score}%` : 'N/A'}</td>
-                        <td><span className={`status ${test.status}`}>{test.status}</span></td>
-                        <td>{new Date(test.created_at).toLocaleDateString()}</td>
+                <div className="table-wrapper">
+                  <table className="tests-table">
+                    <thead>
+                      <tr>
+                        <th className="col-test">Test Name</th>
+                        <th className="col-score">Score</th>
+                        <th className="col-correct">Correct</th>
+                        <th className="col-status">Status</th>
+                        <th className="col-date">Date</th>
+                        <th className="col-topics">Topics</th>
+                        <th className="col-action">Action</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {dashboardData.recent_test_attempts.map((test, idx) => (
+                        <tr key={test.id} className={`table-row ${test.pass_status}`}>
+                          <td className="col-test">
+                            <button 
+                              className="test-link"
+                              onClick={() => navigate(`/test-review/${test.id}`)}
+                              title="View test details"
+                            >
+                              {test.test_title}
+                            </button>
+                          </td>
+                          <td className="col-score">
+                            <div className="score-cell">
+                              <span className="score-value">{test.percentage}%</span>
+                              <div className="mini-bar">
+                                <div 
+                                  className={`mini-fill ${test.pass_status}`}
+                                  style={{ width: `${test.percentage}%` }}
+                                ></div>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="col-correct">
+                            <span className="correct-badge">
+                              {test.correct_answers}/{test.total_questions}
+                            </span>
+                          </td>
+                          <td className="col-status">
+                            <span className={`status-badge ${test.pass_status}`}>
+                              {test.pass_status === 'pass' ? '✓ PASS' : '✗ FAIL'}
+                            </span>
+                          </td>
+                          <td className="col-date">
+                            <span className="date-text">
+                              {new Date(test.created_at).toLocaleDateString('en-US', { 
+                                month: 'short', 
+                                day: 'numeric', 
+                                year: 'numeric' 
+                              })}
+                            </span>
+                          </td>
+                          <td className="col-topics">
+                            {test.topics && test.topics.length > 0 ? (
+                              <div className="topics-cell">
+                                {test.topics.slice(0, 1).map((topic, i) => (
+                                  <span key={i} className="topic-badge">{topic}</span>
+                                ))}
+                                {test.topics.length > 1 && (
+                                  <span className="topic-more">+{test.topics.length - 1}</span>
+                                )}
+                              </div>
+                            ) : (
+                              <span className="no-topics">-</span>
+                            )}
+                          </td>
+                          <td className="col-action">
+                            <button 
+                              className="btn-view"
+                              onClick={() => navigate(`/test-review/${test.id}`)}
+                              title="View details"
+                            >
+                              View
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               ) : (
-                <p className="no-data">No test attempts yet</p>
+                <div className="no-data-container">
+                  <p className="no-data-text">📝 No test attempts yet. Start taking tests to see your results here!</p>
+                </div>
               )}
             </div>
           </div>
         )}
 
         {/* Topics View */}
-        {activeMenu === 'topics' && (
+        {!menuLoading && activeMenu === 'topics' && (
           <div className="topics-view">
             <h1>Available Topics</h1>
             
@@ -530,33 +901,61 @@ const StudentDashboard = () => {
                       <span className="staff-name">👨‍🏫 {topic.staff_name}</span>
                       <span className="topic-date">{new Date(topic.created_at).toLocaleDateString()}</span>
                     </div>
-                    <div className="topic-info">
-                      {topic.file_size && (
-                        <span className="file-size">📄 {(topic.file_size / 1024).toFixed(2)} KB</span>
-                      )}
-                      {topic.is_indexed && (
-                        <span className="status-badge indexed">✓ Indexed ({topic.embedding_chunks} chunks)</span>
-                      )}
-                    </div>
                     <div className="topic-actions">
-                      {topic.download_url && (
-                        <a 
-                          href={`${API_BASE}${topic.download_url}`}
-                          className="download-link"
-                          download
-                          title="Download PDF"
-                        >
-                          📥 PDF
-                        </a>
-                      )}
+                      <button
+                        className="view-tests-btn"
+                        onClick={() => fetchTopicTests(topic.id)}
+                        title="View tests for this topic"
+                      >
+                        📋 View Tests {expandedTopicId === topic.id ? '▲' : '▼'}
+                      </button>
                       <button
                         className={`add-to-test-btn ${selectedTopicIds.includes(topic.id) ? 'added' : ''}`}
-                        onClick={() => selectedTopicIds.includes(topic.id) ? removeTopicFromTest(topic.id) : addTopicToTest(topic.id)}
+                        onClick={() => selectedTopicIds.includes(topic.id) ? removeTopicFromTest(topic.id) : handleAddTest(topic)}
                         title={selectedTopicIds.includes(topic.id) ? 'Remove from test' : 'Add to test'}
                       >
-                        {selectedTopicIds.includes(topic.id) ? '✓ Added' : '+ Add to Test'}
+                        {selectedTopicIds.includes(topic.id) ? '✓ Added' : '+ Add Test'}
                       </button>
                     </div>
+
+                    {/* Topic Tests Display */}
+                    {expandedTopicId === topic.id && topicTests[topic.id] && (
+                      <div className="topic-tests-section">
+                        <div className="topic-tests-header">
+                          <h4>Tests for "{topic.title}"</h4>
+                          <span className="tests-count">
+                            {topicTests[topic.id].attempted_tests}/{topicTests[topic.id].total_tests} attempted
+                          </span>
+                        </div>
+                        {topicTests[topic.id].tests && topicTests[topic.id].tests.length > 0 ? (
+                          <div className="tests-list">
+                            {topicTests[topic.id].tests.map((test) => (
+                              <div key={test.id} className={`topic-test-item ${test.attempted ? 'attempted' : ''}`}>
+                                <div className="test-item-title">
+                                  <h5>{test.title}</h5>
+                                  {test.attempted && (
+                                    <span className="attempted-badge">✓ Attempted</span>
+                                  )}
+                                </div>
+                                <div className="test-item-details">
+                                  {test.attempted && (
+                                    <>
+                                      <span className="score">Score: {test.attempt_score}%</span>
+                                      <span className="date">{new Date(test.attempted_at).toLocaleDateString()}</span>
+                                    </>
+                                  )}
+                                  {!test.attempted && (
+                                    <span className="pending">Pending</span>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="no-tests">No tests created from this topic yet</p>
+                        )}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -622,19 +1021,20 @@ const StudentDashboard = () => {
                         </div>
 
                         <div className="test-name-input">
-                          <label>Test Name (optional)</label>
+                          <label>Test Name <span className="required">*</span></label>
                           <input
                             type="text"
-                            placeholder="Enter test name (or auto-generated from topics)"
+                            placeholder="Enter test name"
                             value={testName}
                             onChange={(e) => setTestName(e.target.value)}
+                            required
                           />
                         </div>
 
                         <button 
                           className="create-test-btn"
                           onClick={createTest}
-                          disabled={isCreatingTest || generatedMCQs.length === 0}
+                          disabled={isCreatingTest || generatedMCQs.length === 0 || !testName.trim()}
                         >
                           {isCreatingTest ? '⏳ Creating Test...' : '🎯 Create Test'}
                         </button>
@@ -648,13 +1048,13 @@ const StudentDashboard = () => {
         )}
 
         {/* Tests View */}
-        {activeMenu === 'tests' && (
+        {!menuLoading && activeMenu === 'tests' && (
           <div className="tests-view">
             <h1>Available Tests</h1>
             {tests.length > 0 ? (
               <div className="tests-grid">
                 {tests.map((test) => (
-                  <div key={test.id} className="test-card">
+                  <div key={test.id} className={`test-card ${test.attempted ? 'attempted' : ''}`}>
                     <div className="test-header">
                       <h3>{test.title}</h3>
                       {test.attempted && <span className="badge attempted">✓ Attempted</span>}
@@ -664,13 +1064,27 @@ const StudentDashboard = () => {
                       <span className="topic-info">📚 {test.topic_title}</span>
                       <span className="staff-info">👨‍🏫 {test.staff_name}</span>
                     </div>
-                    <button 
-                      className="start-btn"
-                      onClick={() => handleStartTest(test.id)}
-                      disabled={test.attempted}
-                    >
-                      {test.attempted ? 'Already Attempted' : 'Start Test'}
-                    </button>
+                    <div className="test-actions">
+                      <button 
+                        className="start-btn"
+                        onClick={() => test.attempted ? handleViewTestResults(test) : handleStartTest(test.id)}
+                      >
+                        {test.attempted ? '📊 View Results' : 'Start Test'}
+                      </button>
+                      {!test.attempted && (
+                        <button 
+                          className="btn-delete-icon"
+                          onClick={(e) => {
+                            console.log('Button clicked!');
+                            handleDeleteClick(test);
+                          }}
+                          title="Delete test"
+                          type="button"
+                        >
+                          🗑️
+                        </button>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>
@@ -681,7 +1095,7 @@ const StudentDashboard = () => {
         )}
 
         {/* Interviews View */}
-        {activeMenu === 'interviews' && (
+        {!menuLoading && activeMenu === 'interviews' && (
           <div className="interviews-view">
             <h1>Available Interviews</h1>
             {interviews.length > 0 ? (
@@ -714,7 +1128,7 @@ const StudentDashboard = () => {
         )}
 
         {/* Test Results View */}
-        {activeMenu === 'results' && (
+        {!menuLoading && activeMenu === 'results' && (
           <div className="results-view">
             <h1>Test Results & Analysis</h1>
 
@@ -905,7 +1319,7 @@ const StudentDashboard = () => {
         )}
 
         {/* Resume View */}
-        {activeMenu === 'resume' && (
+        {!menuLoading && activeMenu === 'resume' && (
           <div className="resume-view">
             <h1>Resume Management</h1>
             
@@ -982,6 +1396,198 @@ const StudentDashboard = () => {
           </div>
         )}
       </main>
+
+      {/* Confirmation Dialog */}
+      {showDialog && (
+        <div className="dialog-overlay" onClick={handleDialogCancel}>
+          <div className="dialog-box" onClick={(e) => e.stopPropagation()}>
+            {dialogType === 'already_attempted' && (
+              <>
+                <h2>⚠️ Test Already Attempted</h2>
+                <p>
+                  The following tests for "<strong>{selectedTopic?.title}</strong>" have already been attempted:
+                </p>
+                <div className="attempted-tests-summary">
+                  {attemptedTestsList.map((test) => (
+                    <div key={test.id} className="attempted-test-item">
+                      <span className="test-name-badge">📝 {test.title}</span>
+                      <span className="attempt-badge">{test.attempt_count ? `${test.attempt_count} attempt${test.attempt_count > 1 ? 's' : ''}` : '1 attempt'}</span>
+                    </div>
+                  ))}
+                </div>
+                <p className="dialog-message">
+                  Would you like to attempt again or create a new test from this topic?
+                </p>
+                <div className="dialog-actions">
+                  <button className="btn-cancel" onClick={handleDialogCancel}>Cancel</button>
+                  <button className="btn-confirm" onClick={handleDialogConfirm}>Create New Test</button>
+                </div>
+              </>
+            )}
+
+            {dialogType === 'test_created' && (
+              <>
+                <h2>✅ Test Created Successfully!</h2>
+                <p>
+                  Your test "<strong>{createdTestInfo?.title}</strong>" has been created successfully.
+                </p>
+                {Object.keys(topicAttemptedInfo).length > 0 && (
+                  <div className="attempted-tests-info">
+                    <h3>📊 Attempted Tests Info:</h3>
+                    {Object.entries(topicAttemptedInfo).map(([topicId, info]) => (
+                      <div key={topicId} className="attempted-info-item">
+                        <span className="topic-name">{info.topicTitle}</span>
+                        <span className="attempted-count">{info.attemptedCount}/{info.totalCount} attempted</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <p className="test-creation-note">
+                  {Object.keys(topicAttemptedInfo).length > 0 
+                    ? 'These topics have already attempted tests. Your new test has been added anyway.' 
+                    : 'Start taking the test now or come back later from the Take Tests section.'}
+                </p>
+                <div className="dialog-actions">
+                  <button className="btn-cancel" onClick={handleDialogCancel}>Continue</button>
+                  <button className="btn-confirm" onClick={handleDialogConfirm}>Go to Take Tests</button>
+                </div>
+              </>
+            )}
+
+            {dialogType === 'pending_tests' && (
+              <>
+                <h2>⏳ Unattempted Test Available</h2>
+                <p>
+                  Topic "<strong>{selectedTopic?.title}</strong>" has the following unattempted test:
+                </p>
+                <div className="pending-tests-list">
+                  {pendingTestsList.map((test) => (
+                    <div key={test.id} className="pending-test">
+                      <button 
+                        className="test-name-link"
+                        onClick={() => {
+                          handleDialogCancel();
+                          navigate(`/test/${test.id}`);
+                        }}
+                        title="Click to take the test"
+                      >
+                        📝 {test.title}
+                      </button>
+                      <span className="test-status-badge">Not Attempted</span>
+                    </div>
+                  ))}
+                </div>
+                <p className="dialog-note">
+                  Click on the test name to take it, or proceed to add more topics to the test builder.
+                </p>
+                <div className="dialog-actions">
+                  <button className="btn-cancel" onClick={handleDialogCancel}>Cancel</button>
+                  <button className="btn-confirm" onClick={handleDialogConfirm}>Add Anyway</button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Dialog - At Root Level */}
+      {showDeleteConfirm && testToDelete && (
+        <div className="dialog-overlay" onClick={handleCancelDelete}>
+          <div className="dialog-box" onClick={(e) => e.stopPropagation()}>
+            <h2>Delete Test</h2>
+            <p>Are you sure you want to delete the test <strong>"{testToDelete.title}"</strong>?</p>
+            <p className="dialog-warning">⚠️ This action cannot be undone. All associated test data and attempts will also be deleted.</p>
+            <div className="dialog-actions">
+              <button 
+                className="btn-cancel"
+                onClick={handleCancelDelete}
+                disabled={deleting}
+              >
+                Cancel
+              </button>
+              <button 
+                className="btn-confirm-delete"
+                onClick={handleDeleteTest}
+                disabled={deleting}
+              >
+                {deleting ? 'Deleting...' : 'Delete Test'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Test Results Detail Modal */}
+      {showResultsDetail && selectedAttemptDetails && (
+        <div className="dialog-overlay" onClick={handleCloseResultsDetail}>
+          <div className="dialog-box results-detail-box" onClick={(e) => e.stopPropagation()}>
+            <div className="results-header">
+              <h2>📊 {selectedAttemptDetails.test_title}</h2>
+              <button 
+                className="close-btn" 
+                onClick={handleCloseResultsDetail}
+                style={{
+                  position: 'absolute',
+                  right: '20px',
+                  top: '20px',
+                  background: 'none',
+                  border: 'none',
+                  fontSize: '24px',
+                  cursor: 'pointer'
+                }}
+              >
+                ✕
+              </button>
+            </div>
+
+            {loadingAttemptDetails ? (
+              <p className="loading">Loading results...</p>
+            ) : (
+              <div className="results-content">
+                <div className="result-stat">
+                  <span className="stat-label">📋 Total Questions:</span>
+                  <span className="stat-value">{selectedAttemptDetails.total_questions}</span>
+                </div>
+
+                <div className="result-stat">
+                  <span className="stat-label">✅ Correct Answers:</span>
+                  <span className="stat-value correct">{selectedAttemptDetails.correct_count}</span>
+                </div>
+
+                <div className="result-stat">
+                  <span className="stat-label">❌ Wrong Answers:</span>
+                  <span className="stat-value wrong">{selectedAttemptDetails.wrong_count}</span>
+                </div>
+
+                <div className="result-stat score-stat">
+                  <span className="stat-label">📈 Score:</span>
+                  <span className="stat-value score">{selectedAttemptDetails.score}%</span>
+                </div>
+
+                <div className={`result-stat status-stat ${selectedAttemptDetails.status}`}>
+                  <span className="stat-label">Result:</span>
+                  <span className={`stat-value ${selectedAttemptDetails.status}`}>
+                    {selectedAttemptDetails.status === 'pass' ? '✅ PASS' : '❌ FAIL'}
+                  </span>
+                </div>
+
+                <p className="result-note">
+                  Attempted on: {new Date(selectedAttemptDetails.attempted_at).toLocaleString()}
+                </p>
+              </div>
+            )}
+
+            <div className="dialog-actions">
+              <button 
+                className="btn-confirm"
+                onClick={handleCloseResultsDetail}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

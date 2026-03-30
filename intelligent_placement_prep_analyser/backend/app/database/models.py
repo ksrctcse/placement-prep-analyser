@@ -152,6 +152,7 @@ class TestAttempt(Base):
     student_id = Column(Integer, ForeignKey("student_profiles.id"), nullable=False, index=True)
     score = Column(Integer)
     status = Column(String, default="completed")  # pending, completed, in_progress
+    attempt_count = Column(Integer, default=1)  # Track how many times this test has been attempted
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
     
     test = relationship("Test", foreign_keys=[test_id])

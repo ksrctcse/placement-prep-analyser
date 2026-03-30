@@ -44,12 +44,12 @@ class GenerateMCQRequest(BaseModel):
 
 class TestAnswerRequest(BaseModel):
     test_id: int
-    answers: Dict[int, str]  # question_id -> student_answer (A, B, C, D)
+    answers: Dict[str, str]  # question_id (as string) -> student_answer (A, B, C, D)
 
 
 class SubmitTestRequest(BaseModel):
     test_id: int
-    answers: Dict[int, str]  # question_id -> student_answer (A, B, C, D)
+    answers: Dict[str, str]  # question_id (as string) -> student_answer (A, B, C, D)
     time_taken: Optional[int] = None  # in seconds
 
 
@@ -257,13 +257,17 @@ async def generate_mcqs(request: Optional[GenerateMCQRequest] = None, authorizat
 
 @router.post("/create-test")
 async def create_test(
-    title: Optional[str] = None,
+    title: str = None,
     authorization: Optional[str] = Header(None)
 ):
     """
     Create a test from generated MCQs with proper student-topic mapping.
     Stores all questions, answers, and correct answers in database.
     """
+    # Validate title is provided and not empty
+    if not title or not title.strip():
+        raise HTTPException(status_code=400, detail="Test name is required")
+    
     user_info = get_current_user(authorization)
     user_id = user_info["user_id"]
     
@@ -289,22 +293,28 @@ async def create_test(
             mcqs = mcqs[:10]  # Enforce maximum 10 questions
             print(f"⚠️  MCQ count exceeded 10, truncated to {len(mcqs)}")
         
-        # Create test with title: topic name + timestamp
+        # Create test with user-provided title
         topics = db.query(Topic).filter(Topic.id.in_(selected_topics)).all()
-        topic_names = " + ".join([t.title for t in topics])
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         
-        test_title = title or f"{topic_names} - {timestamp}"
+        test_title = title.strip()
+        
+        # Get primary topic ID (first selected topic) and staff ID
+        primary_topic_id = selected_topics[0] if selected_topics else None
+        primary_staff_id = topics[0].staff_id if topics else None
         
         print(f"\n📝 Creating Test with {len(mcqs)} questions")
         print(f"   Title: {test_title}")
         print(f"   Topics: {len(selected_topics)}")
+        print(f"   Primary Topic ID: {primary_topic_id}")
+        print(f"   Staff ID: {primary_staff_id}")
         print(f"   Student: ID {student.id}")
         
         # Create test
         new_test = Test(
             title=test_title,
             description=f"Student-created test from {len(selected_topics)} topic(s) with {len(mcqs)} questions",
+            topic_id=primary_topic_id,
+            staff_id=primary_staff_id,
             created_by_student_id=student.id
         )
         
@@ -421,6 +431,93 @@ async def get_test_questions(
         db.close()
 
 
+@router.delete("/tests/{test_id}")
+async def delete_test(
+    test_id: int,
+    authorization: Optional[str] = Header(None)
+):
+    """Delete a test (only student who created it can delete)"""
+    print(f"\n🗑️  DELETE /tests/{test_id} called")
+    
+    if not authorization:
+        print("❌ No authorization token provided")
+        raise HTTPException(status_code=401, detail="No authorization token")
+    
+    user_info = get_current_user(authorization)
+    user_id = user_info["user_id"]
+    print(f"👤 User ID: {user_id}")
+    
+    db = SessionLocal()
+    try:
+        # Get student profile
+        student = db.query(StudentProfile).filter(
+            StudentProfile.user_id == user_id
+        ).first()
+        
+        if not student:
+            print(f"❌ Student profile not found for user {user_id}")
+            raise HTTPException(status_code=404, detail="Student profile not found")
+        
+        print(f"📚 Student ID: {student.id}")
+        
+        # Get test
+        test = db.query(Test).filter(Test.id == test_id).first()
+        
+        if not test:
+            print(f"❌ Test {test_id} not found")
+            raise HTTPException(status_code=404, detail=f"Test {test_id} not found")
+        
+        print(f"📝 Test found: {test.title} (created by student {test.created_by_student_id})")
+        
+        # Verify student is the creator
+        if test.created_by_student_id != student.id:
+            print(f"❌ Student {student.id} is not the creator of test {test_id} (creator: {test.created_by_student_id})")
+            raise HTTPException(status_code=403, detail="You can only delete tests you created")
+        
+        # Store title before deletion
+        test_title = test.title
+        
+        # Delete associated test questions (cascade delete)
+        questions_count = db.query(TestQuestion).filter(TestQuestion.test_id == test_id).count()
+        db.query(TestQuestion).filter(TestQuestion.test_id == test_id).delete()
+        print(f"✅ Deleted {questions_count} test questions")
+        
+        # Delete associated test attempts and details
+        test_attempts = db.query(TestAttempt).filter(TestAttempt.test_id == test_id).all()
+        details_count = 0
+        for attempt in test_attempts:
+            count = db.query(TestAttemptDetail).filter(TestAttemptDetail.test_attempt_id == attempt.id).count()
+            details_count += count
+            db.query(TestAttemptDetail).filter(TestAttemptDetail.test_attempt_id == attempt.id).delete()
+        
+        print(f"✅ Deleted {len(test_attempts)} test attempts and {details_count} answer details")
+        db.query(TestAttempt).filter(TestAttempt.test_id == test_id).delete()
+        
+        # Delete the test
+        db.delete(test)
+        db.commit()
+        
+        print(f"✅ Test {test_id} deleted successfully")
+        
+        return {
+            "success": True,
+            "message": f"Test '{test_title}' deleted successfully",
+            "test_id": test_id
+        }
+    
+    except HTTPException as e:
+        print(f"❌ HTTP Exception: {e.detail}")
+        raise
+    except Exception as e:
+        db.rollback()
+        print(f"❌ Error deleting test: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Error deleting test: {str(e)}")
+    finally:
+        db.close()
+
+
 @router.post("/submit-test")
 async def submit_test(
     request: SubmitTestRequest,
@@ -455,15 +552,42 @@ async def submit_test(
         total_questions = len(test.questions)
         correct_answers = 0
         
-        # Create TestAttempt record
-        test_attempt = TestAttempt(
-            test_id=request.test_id,
-            student_id=student.id,
-            status="completed"
-        )
+        print(f"\n📝 SUBMITTING TEST")
+        print(f"  Student ID: {student.id}")
+        print(f"  Test ID: {request.test_id}")
+        print(f"  Test: {test.title}")
+        print(f"  Total Questions: {total_questions}")
         
-        db.add(test_attempt)
-        db.flush()  # Get the ID without committing
+        # Check if student has already attempted this test
+        existing_attempt = db.query(TestAttempt).filter(
+            TestAttempt.test_id == request.test_id,
+            TestAttempt.student_id == student.id
+        ).first()
+        
+        if existing_attempt:
+            # Increment attempt count for existing test attempt
+            existing_attempt.attempt_count += 1
+            existing_attempt.score = None  # Will be updated below
+            existing_attempt.status = "completed"
+            test_attempt = existing_attempt
+            print(f"  Updated existing TestAttempt ID: {test_attempt.id}, attempt count: {test_attempt.attempt_count}")
+            
+            # Delete old attempt details for a fresh attempt record
+            db.query(TestAttemptDetail).filter(
+                TestAttemptDetail.test_attempt_id == test_attempt.id
+            ).delete()
+            print(f"  Cleared old attempt details for attempt ID: {test_attempt.id}")
+        else:
+            # Create new TestAttempt record
+            test_attempt = TestAttempt(
+                test_id=request.test_id,
+                student_id=student.id,
+                status="completed",
+                attempt_count=1
+            )
+            db.add(test_attempt)
+            db.flush()  # Get the ID without committing
+            print(f"  Created TestAttempt ID: {test_attempt.id}")
         
         # Process each answer
         for question in test.questions:
@@ -490,7 +614,14 @@ async def submit_test(
         score = int((correct_answers / total_questions) * 100) if total_questions > 0 else 0
         test_attempt.score = score
         
+        print(f"  Score: {score}% ({correct_answers}/{total_questions})")
+        
+        # Commit the test attempt and answer details
         db.commit()
+        
+        print(f"✅ Test submission saved successfully")
+        print(f"   Attempt ID: {test_attempt.id}")
+        print(f"   Answer details: {total_questions} records created")
         
         # Trigger AI analysis
         analysis_result = analyze_test_performance(db, test_attempt.id)
@@ -499,11 +630,14 @@ async def submit_test(
             "success": True,
             "test_attempt_id": test_attempt.id,
             "test_id": request.test_id,
+            "student_id": student.id,
             "total_questions": total_questions,
             "correct_answers": correct_answers,
             "incorrect_answers": total_questions - correct_answers,
             "overall_percentage": score,
             "pass_status": score >= 70,
+            "status": "completed",
+            "created_at": test_attempt.created_at.isoformat(),
             "analysis": {
                 "strengths": analysis_result.get("strengths", []),
                 "weaknesses": analysis_result.get("weaknesses", []),
@@ -517,7 +651,9 @@ async def submit_test(
         raise
     except Exception as e:
         db.rollback()
-        print(f"Error submitting test: {e}")
+        print(f"❌ Error submitting test: {e}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Error submitting test: {str(e)}")
     finally:
         db.close()
